@@ -1,0 +1,10 @@
+# Secrets. There is no root .gitignore in this repo's history, and a .env at
+# the root was one `git add -A` away from being published to GitHub along with
+# an API key. Everything below is untracked on purpose.
+.env
+.env.*
+!.env.example
+
+# OS noise
+.DS_Store
+Thumbs.db
