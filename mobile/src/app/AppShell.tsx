@@ -158,6 +158,9 @@ export function AppShell() {
         gaze={controller.gaze}
         proxyHealth={proxyHealth}
         replySource={controller.replySource}
+        isCameraStreaming={controller.isCameraStreaming}
+        setCameraStreaming={controller.setCameraStreaming}
+        cameraState={controller.cameraState}
       />
 
       <SecondVoicePanel

@@ -41,6 +41,9 @@ type Props = {
   gaze?: GazeController;
   proxyHealth: ProxyHealth;
   replySource: 'claude' | 'local';
+  isCameraStreaming: boolean;
+  setCameraStreaming: (on: boolean) => void;
+  cameraState: () => string;
 };
 
 const TAPS_TO_OPEN = 3;
@@ -61,6 +64,9 @@ export function DevOverlay({
   gaze,
   proxyHealth,
   replySource,
+  isCameraStreaming,
+  setCameraStreaming,
+  cameraState,
 }: Props) {
   const [taps, setTaps] = useState(0);
   const [open, setOpen] = useState(false);
@@ -180,6 +186,19 @@ export function DevOverlay({
         {' · last '}
         {replySource}
       </Text>
+
+      {/*
+        JPEG encoding is not free and this phone is also running pose
+        inference, so the camera stream can be switched off without restarting
+        anything. It already costs nothing when no relay is listening — this is
+        for the case where one IS listening and the session matters more.
+      */}
+      <Pressable onPress={() => setCameraStreaming(!isCameraStreaming)} hitSlop={6}>
+        <Text style={styles.row}>
+          camera {isCameraStreaming ? cameraState() : 'OFF'} · tap to
+          {isCameraStreaming ? ' disable' : ' enable'}
+        </Text>
+      </Pressable>
 
       {gaze && (
         <Text style={styles.row}>

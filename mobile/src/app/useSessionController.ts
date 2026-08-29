@@ -31,6 +31,7 @@ import { FatigueDetector } from '../fatigue';
 import { GesturePauseDetector, type GestureDebug } from '../gesture';
 import { GazeController } from './face/gaze';
 import { StreamPublisher, WebSocketClientTransport } from '../streaming';
+import { CAMERA_STREAM_URL, CAMERA_STREAM_FPS } from './cameraTarget';
 import { STREAM_URL } from './streamTarget';
 import { captureSnapshot, type SnapshotEvent } from '../vision/mediapipeAdapter';
 import * as MediaLibrary from 'expo-media-library';
@@ -84,6 +85,15 @@ export function useSessionController() {
 
   /** Whether the last spoken line came from Claude or the local table. */
   const [replySource, setReplySource] = useState<'claude' | 'local'>('local');
+
+  /**
+   * Whether to encode camera JPEGs for the camera relay.
+   *
+   * On by default, but it costs real CPU on a phone that is also running pose
+   * inference, so the dev overlay can switch it off without restarting
+   * anything. Nothing is encoded regardless unless a relay is connected.
+   */
+  const [isCameraStreaming, setCameraStreaming] = useState(true);
 
   /**
    * Filled in by AppShell, which owns Echo. Kept as a ref so the controller
@@ -179,6 +189,7 @@ export function useSessionController() {
   // SnapshotResultMessage.
   useEffect(() => {
     transport.onSnapshotRequest = () => {
+      pendingSavesRef.current += 1;
       captureSnapshot();
     };
     return () => {
@@ -186,8 +197,69 @@ export function useSessionController() {
     };
   }, [transport]);
 
+
+  // --- camera stream (separate relay, separate port) ----------------------
+  //
+  // 03-architecture.md lists FrameMessage as "Not implemented", because the
+  // ThinkSys bridge exposed onLandmark and nothing else. It exposes more now:
+  // the patch in mobile/patches adds captureNextFrame(), which JPEG-encodes the
+  // next camera frame and emits it as 'onSnapshot'. Called repeatedly, that is
+  // video — so the laptop can finally see the person rather than their outline.
+  //
+  // It publishes to its OWN relay on its own port, not to the session viewer's.
+  // Two reasons, and the second is the important one:
+  //
+  //   1. The demo viewer on 8787 carries the skeleton the pitch depends on.
+  //      Putting megabytes of JPEG through the same socket risks the one
+  //      stream that must not stutter.
+  //   2. If nobody runs the camera relay, this whole feature costs nothing.
+  //      Capture is gated on the transport actually being connected, so with
+  //      no relay listening the phone never encodes a single JPEG.
+  //
+  // That gate matters: JPEG encoding is not free, and the pose pipeline is
+  // sharing this device.
+  const cameraPublisher = useMemo(
+    () => new StreamPublisher(new WebSocketClientTransport({ url: CAMERA_STREAM_URL }), {
+      config: { frameFps: CAMERA_STREAM_FPS },
+    }),
+    []
+  );
+
+  useEffect(() => {
+    cameraPublisher.start();
+    return () => cameraPublisher.stop();
+  }, [cameraPublisher]);
+
+  /**
+   * Snapshots have two possible destinations and the event carries no way to
+   * tell them apart, so the purpose is tracked here.
+   *
+   * The viewer's Snapshot button saves a still to the photo library. The camera
+   * stream wants five a second and must save none of them — without this
+   * counter, turning the stream on would quietly fill the user's gallery with
+   * hundreds of photographs of themselves. An explicitly requested save always
+   * wins, because it is the one a person asked for.
+   */
+  const pendingSavesRef = useRef(0);
+
+  useEffect(() => {
+    if (!isCameraStreaming) return;
+    const interval = setInterval(() => {
+      if (cameraPublisher.state !== 'connected') return;
+      captureSnapshot();
+    }, Math.round(1000 / CAMERA_STREAM_FPS));
+    return () => clearInterval(interval);
+  }, [cameraPublisher, isCameraStreaming]);
+
   const handleSnapshot = useCallback(
     (event: SnapshotEvent) => {
+      // A frame for the camera stream, not a photograph anybody asked for.
+      if (pendingSavesRef.current === 0) {
+        cameraPublisher.publishJpegFrame(event.jpegBase64, Date.now());
+        return;
+      }
+      pendingSavesRef.current -= 1;
+
       void (async () => {
         try {
           const { status, canAskAgain } = await MediaLibrary.requestPermissionsAsync();
@@ -211,7 +283,7 @@ export function useSessionController() {
         }
       })();
     },
-    [publisher]
+    [publisher, cameraPublisher]
   );
 
   // --- fatigue ------------------------------------------------------------
@@ -269,6 +341,10 @@ export function useSessionController() {
         // One nose read, throttled and smoothed inside the controller. No
         // state is set, so this adds no renders at camera rate.
         gazeRef.current?.update(frame.landmarks, Date.now());
+
+        // The camera page draws the person box from these. Its own publisher
+        // throttles them, and sends nothing at all when no relay is listening.
+        cameraPublisher.publishPoseFrame(frame);
 
         // Every frame is fed to the detector, including outside an active
         // session, so its release and cooldown state stays honest — but only
@@ -813,6 +889,9 @@ export function useSessionController() {
     eventLog,
     gaze: gazeRef.current,
     replySource,
+    isCameraStreaming,
+    setCameraStreaming,
+    cameraState: () => cameraPublisher.state,
     setEchoRequestHandler,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
     gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,

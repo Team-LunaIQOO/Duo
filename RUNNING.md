@@ -274,6 +274,58 @@ npx expo run:android
 
 Touch and the hand gesture reach every function without it.
 
+## Camera view (live video, port 8789)
+
+**`http://localhost:8789/camera.html`** shows the actual camera picture from
+the phone with a box drawn around the person.
+
+This is the gap that used to be listed below as "no camera video reaches the
+laptop". The ThinkSys bridge still exposes no frame callback of its own, but
+the patch in `mobile/patches/` adds `captureNextFrame()`, which JPEG-encodes
+the next camera frame — and called repeatedly, that is video.
+
+Three things to start, in any order:
+
+```bash
+node viewer/relay.js --port 8789     # a SECOND relay, its own port
+adb reverse tcp:8789 tcp:8789
+# open the Duo app; the camera runs from the idle screen
+```
+
+Then open `http://localhost:8789/camera.html`.
+
+**Measured on the device:** 4.5 frames/sec at about 12 KB a frame. Small enough
+that the rate could go higher if anyone wants it — `CAMERA_STREAM_FPS` in
+`mobile/src/app/cameraTarget.ts`.
+
+### Why a second relay and a second port
+
+The stream on 8787 carries the skeleton the pitch is built on, and this one is
+megabytes of JPEG. They do not share a socket, so nothing here can make the
+demo viewer stutter. 8789 was chosen because nothing else in the repo touches
+it: 8081 is Metro, 8787 the viewer, 8788 the model proxy — and `RUNNING.md`
+already records what a port collision cost this project once.
+
+**With no camera relay running, this feature costs nothing at all.** Capture is
+gated on the transport actually being connected, so the phone never encodes a
+JPEG unless somebody is watching. There is also a `camera` row in the dev
+overlay to switch it off outright, because JPEG encoding is not free on a phone
+that is simultaneously running pose inference.
+
+### The box is drawn from the pose landmarks
+
+Not from a separate object-detection model, and that is the better answer
+rather than a shortcut: the pose model has already located the person joint by
+joint, so the extent of the visible landmarks *is* the person — tighter than a
+detector box, and free. A second model would mean another download and another
+thing to run on a phone that is already doing inference.
+
+It follows that **no person means no box**: if the pose model sees nobody, the
+header reads "no person" and the video plays underneath with nothing drawn on
+it. Landmarks outside the image are dropped rather than clamped, because
+BlazePose extrapolates past the edges of the frame and letting those through
+would inflate the box around a limb the camera cannot see.
+
 ## Gesture pause
 
 **Hold a hand up and the session pauses.** Either hand. The posture is a bent
@@ -445,11 +497,11 @@ hidden:
   axis is right. If they run away from you, something is mirrored — check the
   arm test to find out which, then flip either `MIRROR_MODE` or `GAZE_X_SIGN`
   in `src/app/face/gaze.ts`, not both.
-- **No camera video reaches the laptop.** The ThinkSys bridge exposes
-  `onLandmark` and nothing else — no frame or pixel callback — so there is no
-  way to get JPEGs out of it without native changes. The viewer shows the live
-  skeleton on a plain background. `03-architecture.md` treats landmarks as the
-  primary signal and frames as background, so the demo still reads.
+- ~~**No camera video reaches the laptop.**~~ **Fixed.** It needed the native
+  change this entry predicted: `mobile/patches/` adds `captureNextFrame()` to
+  the bridge, and calling it repeatedly gives video. See "Camera view" above.
+  The session viewer on 8787 still shows the skeleton on a plain background,
+  deliberately — the video lives on its own relay so it cannot affect it.
 
 ## If something is wrong
 
