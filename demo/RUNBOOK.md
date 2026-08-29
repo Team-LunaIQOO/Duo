@@ -58,6 +58,42 @@ without holding the device.
 
 ---
 
+## How long should the demo set be?
+
+Beat 5 needs fatigue to fire *while the judges are still watching*, and ideally
+to pass through `slowing` first so Duo softens before it offers to stop — the
+two responses are distinct in `04-clinical-logic.md` and the softer one is what
+makes the moment land.
+
+Swept across rep counts and tempos against the mock detector:
+
+| Set length | Tempo | Set duration | `slowing` | `fatigued` |
+|---|---|---|---|---|
+| **8 reps** | brisk (2.5s + 1.0s) | 32s | rep 6 @ 22s | rep 8 @ 32s |
+| **8 reps** | natural (3.5s + 1.5s) | 45s | rep 6 @ 31s | rep 8 @ 45s |
+| 9 reps | natural | 50s | rep 8 @ 43s | rep 9 @ 50s |
+| 12 reps | natural | 65s | rep 11 @ 58s | rep 12 @ 65s |
+| 9 reps | slow (4.5s + 2.5s) | 69s | **never fired** | rep 8 @ 59s |
+| 12 reps | slow | 90s | **never fired** | rep 11 @ 80s |
+
+**Recommendation: 8 reps at a natural tempo.**
+
+- `slowing` at rep 6 and `fatigued` at rep 8 leaves **two reps — roughly 14
+  seconds — between them.** Enough to say the narrator line while Duo softens,
+  then let it offer to stop.
+- At 9+ reps the two levels land on *consecutive* reps, about 5 seconds apart.
+  Too fast to narrate; they read as one event.
+- A slow tempo can skip `slowing` altogether. Do not dawdle between reps.
+- 45s of repping fits comfortably inside the 80s that beats 3–5 allow, leaving
+  room for the one-second pause after beat 4.
+
+**Caveat, and it matters:** these are mock numbers from a simulated decay
+profile, so they size the *set*, not the thresholds. They tell you to plan for
+eight reps; they do not tell you the detector is tuned. Confirm against a real
+person during the Saturday calibration protocol and adjust.
+
+---
+
 ## Beat timings
 
 From `06-demo-and-pitch.md`, with what has to be true on screen for each.
@@ -66,9 +102,9 @@ From `06-demo-and-pitch.md`, with what has to be true on screen for each.
 |---|---|---|---|
 | 1 Idle | 0:20 | Face, blinking. **No camera feed.** | Skeleton already moving |
 | 2 Start | 0:20 | Eyes react, Duo asks the exercise | — |
-| 3 Clean reps | 0:30 | Rep count climbing | Skeleton tracking, reps panel |
-| 4 Compensation | 0:30 | Eyes narrow, correction spoken + captioned | Compensation appears in panel |
-| 5 Fatigue | 0:20 | Tired eyes, offer to rest | Fatigue pill goes amber then red |
+| 3 Clean reps | 0:30 | Rep count climbing (reps 1–4) | Skeleton tracking, reps panel |
+| 4 Compensation | 0:30 | Eyes narrow, correction spoken + captioned (rep 5) | Compensation appears in panel |
+| 5 Fatigue | 0:20 | Tired eyes, offer to rest (reps 6–8) | Fatigue pill goes amber then red |
 | 6 Summary | 0:20 | Spoken summary | Summary file lands via Office Kit |
 
 **Total ~2:20**, inside a 3–5 minute slot.
