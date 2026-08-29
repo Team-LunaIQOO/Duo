@@ -1,46 +1,20 @@
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import { StatusBar } from 'expo-status-bar';
-import { Button, StyleSheet, Text, View } from 'react-native';
+import { AppShell } from './src/app/AppShell';
 
+/**
+ * Composition root, shared across all three modules — see
+ * docs/05-build-plan.md, "Working rules": say it out loud before changing
+ * shared contracts. This file currently mounts Person B's app shell
+ * directly; Person A's camera pipeline (src/vision/) will run headless
+ * underneath it and publish PoseFrame into the same tree once ready
+ * (the camera feed itself is never rendered on the phone screen, per
+ * 02-product-spec.md).
+ */
 export default function App() {
-  const [permission, requestPermission] = useCameraPermissions();
-
-  if (!permission) {
-    return <View style={styles.container} />;
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.message}>Duo needs camera access to watch your exercise reps.</Text>
-        <Button onPress={requestPermission} title="Grant camera permission" />
-        <StatusBar style="auto" />
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      <CameraView style={styles.camera} facing="front" />
-      <StatusBar style="auto" />
-    </View>
+    <>
+      <AppShell />
+      <StatusBar hidden />
+    </>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  message: {
-    textAlign: 'center',
-    paddingBottom: 20,
-    paddingHorizontal: 24,
-  },
-  camera: {
-    flex: 1,
-    width: '100%',
-  },
-});
