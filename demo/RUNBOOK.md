@@ -16,6 +16,20 @@ connected before the judges arrive. Do not do setup in front of them."*
 
 Budget 5 minutes. In order:
 
+**Three processes now run on the laptop**, not one. Ports matter — they were
+made to collide once already:
+
+| Process | Port | Needed for |
+|---|---|---|
+| `node viewer/relay.js` | **8787** | The laptop viewer. Required for beat 1. |
+| `npx expo start --dev-client` (Metro) | **8081** | Only for a dev build. Not needed if the APK is a release build. |
+| `node second-voice-proxy/server.mjs` | **8788** | Second Voice only. Skip it if you are not demoing that. |
+
+Do not let the proxy take 8787. It used to default there, and the two servers
+do **not** fail loudly when they collide — on Windows they bind on different
+address families and requests split silently, so `adb reverse` sends the phone
+to the wrong one and the viewer just stays blank. Fixed, but worth knowing.
+
 1. **Same network.** Phone and laptop on the same WiFi. Venue WiFi may isolate
    clients from each other — see "If the network blocks it" below. Test this
    the moment you arrive at the venue, not at the table.
@@ -24,6 +38,14 @@ Budget 5 minutes. In order:
    node viewer/relay.js
    ```
    It prints the viewer URL and the `ws://` URL for the phone. Note the LAN IP.
+
+   If demoing Second Voice, start its proxy too, in another terminal:
+   ```
+   OPENROUTER_API_KEY=... node second-voice-proxy/server.mjs
+   ```
+   It refuses to start without a key. **This is the one part of the product
+   that needs the internet** — check connectivity before relying on it, and
+   have the fallback path in mind if the venue WiFi is unusable.
 3. **Open the viewer**: `http://localhost:8787/` on the laptop. Full screen it.
    The status dot goes amber ("waiting for phone").
 4. **Point the phone at the laptop.** Enter the LAN IP in the app. The dot goes
@@ -130,6 +152,10 @@ keep moving — freezing costs more than the fault does.
 | Phone can't reach laptop | — | Check both are on the same WiFi and the IP is current. Phone hotspot is the fallback. |
 | Compensation doesn't fire | "Let me exaggerate that." | Lean further. Thresholds are hand-tuned; say so, it is the honest answer. |
 | Fatigue doesn't fire in time | Move to the summary. | Do not stall waiting for it. It is Tier 2. |
+| No reps counting at all | — | Sit back so your **hips are in shot**. E1's angle is hip → shoulder → elbow; no hips, no angle. |
+| Left/right reported backwards | — | Mirror mode. Raise only your right arm to check. Inverts the affected-side analysis, so verify before demoing. |
+| Second Voice returns nothing | "That part needs a connection — the exercise session doesn't." | Proxy down, no key, or no internet. Falls back locally. Do not pretend it is offline. |
+| Viewer blank though relay is running | — | Something else grabbed 8787, or `adb reverse` is not set. |
 
 ### If the network blocks it
 

@@ -12,8 +12,8 @@ cannot load native modules that are not built into it. You need a real native
 build on a real device.
 
 That is not a regression, it is the whole point — pose detection has to run on
-the phone's NPU (README rule #1). But if you try to scan a QR code into Expo Go
-you will get `Cannot find native module`, and the error does not explain why.
+the device (README rule #1). But if you try to scan a QR code into Expo Go you
+will get `Cannot find native module`, and the error does not explain why.
 
 ## Prerequisites
 
@@ -77,6 +77,44 @@ venue WiFi as the likeliest way to lose the laptop stream.
 
 **Over WiFi.** Set `LAPTOP_HOST` in `mobile/src/app/streamTarget.ts` to the LAN
 address `relay.js` prints, and make sure both devices are on the same network.
+
+## Second Voice (optional)
+
+A communication aid for aphasia: it reconstructs the user's intended sentence
+from a rough transcript and asks them to approve it before speaking. Lives in
+`mobile/src/app/secondVoice/`, and is gated to `phase !== 'active'` so it never
+runs during an exercise session.
+
+It calls OpenRouter through a proxy that keeps the API key off the phone:
+
+```bash
+OPENROUTER_API_KEY=sk-... node second-voice-proxy/server.mjs
+```
+
+Then point the app at it:
+
+```bash
+EXPO_PUBLIC_SECOND_VOICE_PROXY_URL=http://<laptop-lan-ip>:8788/reconstruct
+```
+
+**This is the only part of Duo that needs the internet.** Everything else —
+camera, pose model, rep counting, compensation detection, fatigue, TTS — runs
+entirely on the phone. Without the proxy the panel degrades to a local fallback
+provider rather than breaking. Be precise about this when pitching: the
+exercise session works in airplane mode, the whole product does not.
+
+## Ports
+
+| Port | Process | Notes |
+|---|---|---|
+| **8787** | `viewer/relay.js` | The laptop viewer. Baked into the phone's `DEFAULT_STREAM_PORT` and the `adb reverse` instructions. Do not reassign it. |
+| **8788** | `second-voice-proxy/server.mjs` | Override with `SECOND_VOICE_PORT`. |
+| **8081** | Metro | `npx expo start --dev-client`. |
+
+The relay and the proxy do **not** fail loudly if both try to take 8787: on
+Windows they bind on different address families and requests split silently by
+IPv4 vs IPv6, which sends `adb reverse` traffic to the wrong server and leaves
+the viewer blank with nothing in any log. Keep them apart.
 
 ## Working without the phone
 
@@ -145,3 +183,5 @@ hidden:
 | Laptop viewer blank | Is `relay.js` running, and did you `adb reverse tcp:8787 tcp:8787`? |
 | Metro port already in use | An old dev server is holding 8081. Kill it and restart. |
 | Left/right reported backwards | Mirror mode. See "Known gaps". |
+| Viewer blank while `relay.js` says it is running | Something else took 8787 — most likely the Second Voice proxy. See "Ports". |
+| Second Voice returns nothing | Proxy not running, no `OPENROUTER_API_KEY`, or no internet. It falls back locally rather than erroring. |

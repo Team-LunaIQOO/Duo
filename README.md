@@ -2,7 +2,9 @@
 
 A phone-only AI rehab companion for stroke survivors doing home exercises. Built for the iQOO Hackathon 2026 (Reskilll), HealthTech track, Chennai city battle. Team of 3, roughly 19 hours of build time.
 
-The phone is the whole product. No robot, no wearables, no external sensors. The camera watches the exercise, the pose model runs on the device's NPU, and the app talks back like a companion rather than a rep counter.
+The phone is the whole product. No robot, no wearables, no external sensors. The camera watches the exercise, the pose model runs on the device, and the app talks back like a companion rather than a rep counter.
+
+> As built, inference runs on the **CPU** delegate, not the NPU — the MediaPipe bridge hardcodes it. "On-device" is accurate; "NPU" is not. See `03-architecture.md`, "Implementation status".
 
 ## Read in this order
 
