@@ -27,6 +27,25 @@ export type StreamTransport = {
   /** Returns true if the message was handed to the socket, false if dropped. */
   send(message: StreamMessage): boolean;
   onStateChange?: (state: TransportState) => void;
+  /**
+   * Called with a note's text when the viewer sends one. The phone is
+   * otherwise deliberately one-way (see WebSocketClientTransport) — this is
+   * the single, narrow exception, and the implementation must validate
+   * strictly before ever calling this: only a well-formed NoteMessage,
+   * never anything else on the socket. The text is inert display data,
+   * spoken and captioned verbatim like any other feedback line, never
+   * parsed as a command or evaluated.
+   */
+  onNote?: (text: string) => void;
+  /**
+   * Called when the viewer asks for a real camera photo to be captured and
+   * saved on the phone. Same trust posture as onNote: validated strictly
+   * before ever being invoked, and the only effect it may have is asking
+   * the vision layer for one JPEG -- it can never request anything else,
+   * cannot be parameterised by the sender, and the resulting photo is never
+   * sent back over this socket, only a yes/no acknowledgement.
+   */
+  onSnapshotRequest?: () => void;
 };
 
 /**
@@ -75,6 +94,13 @@ export class WebSocketClientTransport implements StreamTransport {
   private readonly config: StreamConfig;
 
   onStateChange?: (state: TransportState) => void;
+  onNote?: (text: string) => void;
+  onSnapshotRequest?: () => void;
+
+  /** Hard ceiling independent of the transport's normal maxMessageBytes,
+   * which governs outbound sizing policy, not what this phone will accept
+   * from the socket. A note is meant to be a sentence, not a payload. */
+  private static readonly MAX_NOTE_LENGTH = 500;
 
   constructor(config: Partial<StreamConfig> = {}) {
     this.config = { ...DEFAULT_STREAM_CONFIG, ...config };
@@ -189,9 +215,39 @@ export class WebSocketClientTransport implements StreamTransport {
       this.scheduleRetry();
     };
 
-    // The viewer never talks back. Ignoring inbound messages keeps the phone
-    // from being steerable by whatever is on the other end of the socket.
-    s.onmessage = () => {};
+    // The phone is one-way except for two narrow, explicitly allow-listed
+    // shapes. This handler is the entire trust boundary: anything that is
+    // not exactly one of these two is rejected outright, and neither
+    // handler receives anything the sender can parameterise beyond what is
+    // declared here.
+    //   {type:'note', text}       -> spoken verbatim, never interpreted
+    //   {type:'snapshot_request'} -> asks the vision layer for one JPEG;
+    //                                carries no data of its own at all
+    s.onmessage = (event) => {
+      if (typeof event.data !== 'string') return;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+
+      if (typeof parsed !== 'object' || parsed === null) return;
+      const type = (parsed as { type?: unknown }).type;
+
+      if (type === 'note' && this.onNote) {
+        const rawText = (parsed as { text?: unknown }).text;
+        if (typeof rawText !== 'string') return;
+        const text = rawText.trim().slice(0, WebSocketClientTransport.MAX_NOTE_LENGTH);
+        if (text) this.onNote(text);
+        return;
+      }
+
+      if (type === 'snapshot_request' && this.onSnapshotRequest) {
+        this.onSnapshotRequest();
+      }
+    };
   }
 
   private scheduleRetry(): void {

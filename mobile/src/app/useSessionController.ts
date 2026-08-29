@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CompensationEvent,
+  CompensationLogEntry,
   ExerciseId,
   PoseFrame,
   RepEvent,
+  RepSummary,
   SessionState,
 } from '../types/contracts';
 import * as machine from './state/sessionMachine';
@@ -17,8 +19,13 @@ import {
 import { generateTemplateSummary } from './summary/generateSummary';
 import { parseVoiceCommand } from './voice/commandParser';
 import { FatigueDetector } from '../fatigue';
+import { GesturePauseDetector, type GestureDebug } from '../gesture';
+import { GazeController } from './face/gaze';
 import { StreamPublisher, WebSocketClientTransport } from '../streaming';
 import { STREAM_URL } from './streamTarget';
+import { captureSnapshot, type SnapshotEvent } from '../vision/mediapipeAdapter';
+import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
 
 /**
  * Single integration point for the pose/rep/compensation stream.
@@ -35,6 +42,13 @@ import { STREAM_URL } from './streamTarget';
 export function useSessionController() {
   const [session, setSession] = useState<SessionState>(machine.createInitialSessionState());
   const previousQualityRef = useRef<RepEvent['quality'] | null>(null);
+
+  // Full-session history for the laptop viewer only (per-side tally,
+  // compensation log, quality timeline). SessionState itself only tracks
+  // *active* compensations by design — this does not change that contract,
+  // it is purely local bookkeeping for what gets published to the stream.
+  const compensationHistoryRef = useRef<CompensationLogEntry[]>([]);
+  const sessionStartedAtRef = useRef<number | null>(null);
 
   const isActive = session.phase === 'active';
 
@@ -85,15 +99,81 @@ export function useSessionController() {
   // "If the laptop disconnects, the session continues unaffected." The
   // transport reconnects on its own and drops rather than queues, so nothing
   // here can stall the session loop.
-  const publisher = useMemo(
-    () => new StreamPublisher(new WebSocketClientTransport({ url: STREAM_URL })),
-    []
-  );
+  const transport = useMemo(() => new WebSocketClientTransport({ url: STREAM_URL }), []);
+  const publisher = useMemo(() => new StreamPublisher(transport), [transport]);
 
   useEffect(() => {
     publisher.start();
     return () => publisher.stop();
   }, [publisher]);
+
+  // A note from the laptop is delivered as an ordinary spoken/captioned line,
+  // the same path every other feedback string takes — never treated as a
+  // command. Held until idle rather than interrupting whatever the user is
+  // doing (04-clinical-logic.md's "one instruction at a time" applies here
+  // too, and a note is lower priority than a live correction).
+  const pendingNoteRef = useRef<string | null>(null);
+  useEffect(() => {
+    transport.onNote = (text) => {
+      pendingNoteRef.current = text;
+    };
+    return () => {
+      transport.onNote = undefined;
+    };
+  }, [transport]);
+
+  useEffect(() => {
+    if (session.phase !== 'idle' || !pendingNoteRef.current) return;
+    const note = pendingNoteRef.current;
+    pendingNoteRef.current = null;
+    setSession((s) => machine.speak(s, note));
+  }, [session.phase]);
+
+  // --- snapshot ------------------------------------------------------------
+  //
+  // The one place in this whole system where a photograph of the person is
+  // captured and stored anywhere. Triggered only by an explicit request from
+  // the laptop viewer (never automatically, never on a timer); the photo
+  // itself never leaves the phone -- it goes to the device's own photo
+  // library via expo-media-library, and only a yes/no result is sent back
+  // over the socket. See contracts.ts, SnapshotRequestMessage/
+  // SnapshotResultMessage.
+  useEffect(() => {
+    transport.onSnapshotRequest = () => {
+      captureSnapshot();
+    };
+    return () => {
+      transport.onSnapshotRequest = undefined;
+    };
+  }, [transport]);
+
+  const handleSnapshot = useCallback(
+    (event: SnapshotEvent) => {
+      void (async () => {
+        try {
+          const { status, canAskAgain } = await MediaLibrary.requestPermissionsAsync();
+          if (status !== 'granted') {
+            publisher.publishSnapshotResult({
+              ok: false,
+              reason: canAskAgain ? 'permission_denied' : 'permission_blocked',
+            });
+            return;
+          }
+
+          const path = `${FileSystem.cacheDirectory}duo-snapshot-${Date.now()}.jpg`;
+          await FileSystem.writeAsStringAsync(path, event.jpegBase64, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          await MediaLibrary.createAssetAsync(path);
+
+          publisher.publishSnapshotResult({ ok: true });
+        } catch {
+          publisher.publishSnapshotResult({ ok: false, reason: 'save_failed' });
+        }
+      })();
+    },
+    [publisher]
+  );
 
   // --- fatigue ------------------------------------------------------------
   // Rebuilt per session and per side: the detector compares the last reps
@@ -111,6 +191,32 @@ export function useSessionController() {
     });
   }, [session.exercise, session.affectedSide, session.phase === 'idle']);
 
+  // --- gesture pause ------------------------------------------------------
+  // Created once and kept for the app's lifetime. It holds all of its state
+  // internally, so the frame handler that drives it stays free of closures —
+  // the constraint the ThinkSys bridge imposes (see useVisionStream).
+  //
+  // 02-product-spec.md, "Control methods": a raised hand, either hand, means
+  // pause. Additive only — it calls the same pauseSession() the Pause button
+  // calls, so gesture and touch cannot drift apart, and "do not make any
+  // single control method the only route to any function" holds trivially.
+  const gestureRef = useRef<GesturePauseDetector | null>(null);
+  if (gestureRef.current === null) gestureRef.current = new GesturePauseDetector();
+
+  // --- where the eyes look --------------------------------------------------
+  // 02-product-spec.md, the eye-state table: the attentive eyes track the
+  // user's head position from the pose landmarks. Created once and fed from
+  // the frame handler below. Nothing about it touches React state — see the
+  // note at the top of face/gaze.ts for why that matters at camera rate.
+  const gazeRef = useRef<GazeController | null>(null);
+  if (gazeRef.current === null) gazeRef.current = new GazeController();
+
+  useEffect(() => {
+    const gaze = gazeRef.current;
+    gaze?.start();
+    return () => gaze?.stop();
+  }, []);
+
   const { handlePoseFrame, status } = useVisionStream(
     isActive,
     session.exercise,
@@ -120,6 +226,23 @@ export function useSessionController() {
       onFrame: (frame: PoseFrame) => {
         fatigueRef.current?.onPoseFrame(frame);
         publisher.publishPoseFrame(frame);
+
+        // One nose read, throttled and smoothed inside the controller. No
+        // state is set, so this adds no renders at camera rate.
+        gazeRef.current?.update(frame.landmarks, Date.now());
+
+        // Every frame is fed to the detector, including outside an active
+        // session, so its release and cooldown state stays honest — but only
+        // an active session can be paused by one. A gesture during setup or
+        // after the summary is a no-op rather than a surprise.
+        const gesture = gestureRef.current?.update(frame) ?? null;
+        if (gesture) {
+          logEvent(
+            `GESTURE ${gesture.side} hand ${Math.round(gesture.heldMs)}ms` +
+              (session.phase === 'active' ? ' -> pause' : ` (ignored in ${session.phase})`)
+          );
+          if (session.phase === 'active') pauseSession();
+        }
       },
 
       onRep: (rep: RepEvent) => {
@@ -154,6 +277,11 @@ export function useSessionController() {
 
       onCompensation: (event: CompensationEvent) => {
         logEvent(`COMP ${event.type} ${event.severity} ${Math.round(event.sustainedMs)}ms`);
+        compensationHistoryRef.current.push({
+          timestamp: event.timestamp,
+          type: event.type,
+          severity: event.severity,
+        });
         setSession((s) => {
           let next = machine.applyCompensation(s, event);
           next = machine.speak(next, COMPENSATION_LINES[event.type]);
@@ -176,12 +304,18 @@ export function useSessionController() {
     quality: '—',
     compensations: [] as string[],
     fatigue: 'none' as string,
+    repHistory: [] as RepSummary[],
+    compensationHistory: [] as CompensationLogEntry[],
+    sessionElapsedMs: undefined as number | undefined,
   });
   statsRef.current = {
     reps: session.reps.length,
     quality: session.reps[session.reps.length - 1]?.quality ?? '—',
     compensations: session.activeCompensations.map((c) => c.type),
     fatigue: session.fatigue,
+    repHistory: session.reps.map((r) => ({ repNumber: r.repNumber, side: r.side, quality: r.quality })),
+    compensationHistory: compensationHistoryRef.current,
+    sessionElapsedMs: sessionStartedAtRef.current === null ? undefined : Date.now() - sessionStartedAtRef.current,
   };
 
   useEffect(() => {
@@ -222,6 +356,22 @@ export function useSessionController() {
     }
   }, [isActive, status.framed, status.seenAnyPose]);
 
+  /**
+   * The acknowledging blink is a one-shot, so it has to be taken back off.
+   *
+   * Its blink interval is "never" by design — the animation is the whole
+   * state. During a session the compensation prune tick happened to settle it
+   * within half a second, but nothing settled it in idle, setup or summary, so
+   * a wake phrase or a voice command outside a session would leave the eyes
+   * frozen open. That was invisible while those screens hardcoded their face
+   * state and would have appeared the moment they stopped.
+   */
+  useEffect(() => {
+    if (session.faceState !== 'acknowledging') return;
+    const timer = setTimeout(() => setSession((s) => machine.settleFaceState(s)), 700);
+    return () => clearTimeout(timer);
+  }, [session.faceState]);
+
   // Prune compensations whose sustain window has passed, and re-settle the
   // face state, on a light tick — independent of the stream rate.
   useEffect(() => {
@@ -243,6 +393,8 @@ export function useSessionController() {
 
   const chooseExercise = useCallback((exercise: ExerciseId, affectedSide: 'left' | 'right') => {
     setCurrentArm('affected');
+    sessionStartedAtRef.current = Date.now();
+    compensationHistoryRef.current = [];
     setSession((s) => machine.beginActive(machine.startSetup(s, exercise, affectedSide)));
   }, []);
 
@@ -285,10 +437,36 @@ export function useSessionController() {
   }, []);
   const restartSession = useCallback(() => {
     previousQualityRef.current = null;
+    sessionStartedAtRef.current = null;
+    compensationHistoryRef.current = [];
     publisher.resetSession();
+    gestureRef.current?.reset();
     setCurrentArm('affected');
     setSession(machine.restart());
   }, [publisher]);
+
+  /**
+   * A bare "hey duo", with no command attached.
+   *
+   * 02-product-spec.md, step 2 of the session: "The user says the wake phrase,
+   * or taps the screen. The eyes react (widen, look toward the user). Duo asks
+   * what they are working on today." So from idle the wake phrase does exactly
+   * what tapping the screen does — it is the same doorway, and startSetup is
+   * the same function the tap calls.
+   *
+   * Anywhere else it is an acknowledgement: the eyes give their one quick wide
+   * blink, and the armed window in useSpeechCommands waits for the
+   * instruction. Nothing else changes, because the user has not asked for
+   * anything yet.
+   */
+  const handleWake = useCallback(() => {
+    logEvent('VOICE wake');
+    if (session.phase === 'idle') {
+      startSetup();
+      return;
+    }
+    setSession((s) => machine.acknowledge(s));
+  }, [session.phase, startSetup, logEvent]);
 
   // Every voice command routes through the same actions the touch buttons
   // use, so the two control methods can never behave differently (see
@@ -297,7 +475,17 @@ export function useSessionController() {
   const handleHeardSpeech = useCallback(
     (heard: string) => {
       const command = parseVoiceCommand(heard);
-      if (!command) return;
+      if (!command) {
+        // Something was said and not understood. Blank means the microphone
+        // opened and heard nothing at all, which needs no reply.
+        if (heard.trim()) {
+          logEvent(`VOICE "${heard}" not understood`);
+          setSession((s) => machine.speak(s, CONTROL_LINES.notUnderstood));
+        }
+        return;
+      }
+
+      logEvent(`VOICE "${heard}" -> ${command}`);
 
       switch (command) {
         case 'start':
@@ -323,7 +511,7 @@ export function useSessionController() {
           break;
       }
     },
-    [session.phase, startSetup, resumeSession, pauseSession, endSession]
+    [session.phase, startSetup, resumeSession, pauseSession, endSession, logEvent]
   );
 
   return {
@@ -334,6 +522,7 @@ export function useSessionController() {
     currentArm,
     cameraNeeded,
     handlePoseFrame,
+    handleSnapshot,
     startSetup,
     chooseExercise,
     switchArm,
@@ -342,7 +531,10 @@ export function useSessionController() {
     endSession,
     restartSession,
     handleHeardSpeech,
+    handleWake,
     eventLog,
+    gaze: gazeRef.current,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
+    gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,
   };
 }

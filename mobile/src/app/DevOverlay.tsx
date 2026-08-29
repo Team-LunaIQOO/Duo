@@ -18,11 +18,14 @@
  * Deliberately awkward, so it cannot be opened by accident on stage.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { SessionState } from '../types/contracts';
 import type { FatigueDebug } from '../fatigue';
+import type { GestureDebug } from '../gesture';
+import type { SpeechCommandsStatus } from './voice/useSpeechCommands';
+import type { GazeController } from './face/gaze';
 
 type Props = {
   session: SessionState;
@@ -32,6 +35,9 @@ type Props = {
   currentArm: 'affected' | 'unaffected';
   eventLog: string[];
   fatigueDebug: () => FatigueDebug | null;
+  gestureDebug: () => GestureDebug | null;
+  voice: SpeechCommandsStatus;
+  gaze?: GazeController;
 };
 
 const TAPS_TO_OPEN = 3;
@@ -47,9 +53,27 @@ export function DevOverlay({
   currentArm,
   eventLog,
   fatigueDebug,
+  gestureDebug,
+  voice,
+  gaze,
 }: Props) {
   const [taps, setTaps] = useState(0);
   const [open, setOpen] = useState(false);
+
+  // Re-render on a light tick while the panel is open.
+  //
+  // Nothing in this app re-renders per frame — the session state only changes
+  // when a rep or an event lands — so the two live rows below would otherwise
+  // sit frozen between reps. A gesture hold timer that only updates when
+  // something else happens cannot be used to check anything, and watching it
+  // move is the whole method for the false-positive check in RUNNING.md.
+  // Mounted only while open, so it costs nothing during a demo.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 250);
+    return () => clearInterval(timer);
+  }, [open]);
 
   if (!open) {
     return (
@@ -69,6 +93,7 @@ export function DevOverlay({
   }
 
   const fatigue = fatigueDebug();
+  const gesture = gestureDebug();
   const affected = session.reps.filter((r) => r.side === 'affected').length;
   const unaffected = session.reps.filter((r) => r.side === 'unaffected').length;
 
@@ -97,6 +122,46 @@ export function DevOverlay({
       </Text>
       {fatigue && fatigue.framesSkipped > 0 && (
         <Text style={styles.row}>frames skipped {fatigue.framesSkipped}</Text>
+      )}
+
+      {/*
+        Gesture pause is invisible from the outside in exactly the way
+        compensation is: a detector that never fires and one that is about to
+        fire look identical. This row is how the false-positive check in
+        RUNNING.md is actually performed — do a set of reps and watch that the
+        reject reason keeps saying why each arm is not a raised hand, rather
+        than the hold timer creeping up.
+      */}
+      <Text style={styles.row}>
+        gesture {gesture?.posture ? `${gesture.posture} hold ${Math.round(gesture.heldMs)}ms` : (gesture?.reject ?? '—')}
+        {gesture?.latched ? ' · latched' : ''} · fired {gesture?.firedCount ?? 0}
+      </Text>
+
+      {/*
+        Whether recognition is on-device is not cosmetic: the pitch claims the
+        exercise session works in airplane mode, and a cloud recogniser would
+        make that false. This row is where that claim gets checked before it is
+        made on stage.
+      */}
+      <Text style={styles.row}>
+        voice {voice.available ? (voice.usingOnDevice ? 'on-device' : 'CLOUD') : 'unavailable'}
+        {voice.listening ? ' · mic open' : ''}
+        {voice.armed ? ' · ARMED' : ''}
+        {voice.lastError ? ` · err ${voice.lastError}` : ''}
+      </Text>
+      <Pressable onPress={() => voice.setWakeEnabled(!voice.wakeEnabled)} hitSlop={6}>
+        <Text style={styles.row}>
+          wake {voice.wakeActive ? 'listening' : voice.wakeEnabled ? 'paused' : 'OFF'} · tap to
+          {voice.wakeEnabled ? ' disable' : ' enable'}
+        </Text>
+      </Pressable>
+      {voice.lastHeard && <Text style={styles.rowDim}>heard "{voice.lastHeard}"</Text>}
+
+      {gaze && (
+        <Text style={styles.row}>
+          gaze {gaze.tracking ? 'tracking' : 'centred'} · x {gaze.debugX.toFixed(2)} y{' '}
+          {gaze.debugY.toFixed(2)}
+        </Text>
       )}
 
       <Text style={styles.rowDim}>

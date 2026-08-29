@@ -87,12 +87,80 @@ export type FrameMessage = {
   jpeg: string; // base64, downscaled to ~320px wide, quality ~50
 };
 
+/**
+ * One completed rep, enough for the viewer to build a per-side tally and a
+ * quality timeline without doing any analysis of its own (03-architecture.md:
+ * "The laptop does zero analysis"). Additive field — existing StatsMessage
+ * consumers that only read reps/quality/compensations/fatigue are unaffected.
+ */
+export type RepSummary = {
+  repNumber: number;
+  side: 'affected' | 'unaffected';
+  quality: 'good' | 'partial' | 'compensated';
+};
+
+/**
+ * One compensation event for the viewer's running history. Additive, same
+ * reasoning as RepSummary: existing consumers of StatsMessage.compensations
+ * (the currently-active list) are untouched.
+ */
+export type CompensationLogEntry = {
+  timestamp: number;
+  type: 'forward_lean' | 'trunk_rotation' | 'shoulder_elevation';
+  severity: 'mild' | 'marked';
+};
+
 export type StatsMessage = {
   type: 'stats';
   reps: number;
   quality: string;
   compensations: string[];
   fatigue: string;
+  /** Optional: full rep history so far this session. */
+  repHistory?: RepSummary[];
+  /** Optional: full compensation history so far this session. */
+  compensationHistory?: CompensationLogEntry[];
+  /** Optional: ms since the session became active, for a laptop-side timer. */
+  sessionElapsedMs?: number;
 };
 
-export type StreamMessage = LandmarkMessage | FrameMessage | StatsMessage;
+/**
+ * A short note from the laptop side, delivered back to the phone for the
+ * start of the next session. Viewer -> phone, the one message type that
+ * flows the opposite direction from everything else here. Never analysed or
+ * acted on automatically — it is read aloud verbatim, same as any other
+ * feedback line (02-product-spec.md: "everything spoken is also shown as
+ * text on screen").
+ */
+export type NoteMessage = {
+  type: 'note';
+  text: string; // caller must keep this short; the phone does not truncate
+};
+
+/**
+ * Viewer -> phone: request one real camera JPEG. This is the one place in
+ * the whole system where a photograph of the person is captured and stored
+ * anywhere — every other display and export in this project (the laptop
+ * skeleton, its own snapshot export) is built from landmark coordinates
+ * only. The phone decides what "capture" means (it saves to the device's
+ * own photo library), never the laptop; this message only asks for it.
+ */
+export type SnapshotRequestMessage = {
+  type: 'snapshot_request';
+};
+
+/** Phone -> viewer: acknowledgement only, never the image itself. The photo
+ * stays on the phone; the laptop is told whether it was saved. */
+export type SnapshotResultMessage = {
+  type: 'snapshot_result';
+  ok: boolean;
+  reason?: string; // present when ok is false, e.g. 'permission_denied'
+};
+
+export type StreamMessage =
+  | LandmarkMessage
+  | FrameMessage
+  | StatsMessage
+  | NoteMessage
+  | SnapshotRequestMessage
+  | SnapshotResultMessage;

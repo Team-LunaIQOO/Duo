@@ -1,0 +1,261 @@
+diff --git a/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/MediaPipeNativeModule.java b/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/MediaPipeNativeModule.java
+index df38cc4..8d7f91c 100644
+--- a/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/MediaPipeNativeModule.java
++++ b/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/MediaPipeNativeModule.java
+@@ -37,4 +37,19 @@ public class MediaPipeNativeModule extends ReactContextBaseJavaModule {
+       Log.e("switchCameraMethod", "CameraFragment is not initialized");
+     }
+   }
++
++  /**
++   * Arms a one-shot capture of the next camera frame as a JPEG, delivered
++   * to JS as the 'onSnapshot' event. Does not run on the UI thread itself --
++   * captureNextFrame() only sets a flag that the camera's own background
++   * executor checks, so this call is cheap and never blocks.
++   */
++  @ReactMethod
++  public void captureSnapshotMethod() {
++    if (CameraFragmentManager.INSTANCE.getCameraFragment() != null) {
++      CameraFragmentManager.INSTANCE.getCameraFragment().captureNextFrame();
++    } else {
++      Log.e("captureSnapshotMethod", "CameraFragment is not initialized");
++    }
++  }
+ }
+diff --git a/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/fragment/CameraFragment.kt b/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/fragment/CameraFragment.kt
+index 8b61fa3..8ccf1d6 100644
+--- a/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/fragment/CameraFragment.kt
++++ b/node_modules/@thinksys/react-native-mediapipe/android/src/main/java/com/tsmediapipe/fragment/CameraFragment.kt
+@@ -5,7 +5,10 @@ import android.annotation.SuppressLint
+ import android.content.Context
+ import android.content.pm.PackageManager
+ import android.content.res.Configuration
++import android.graphics.Bitmap
++import android.graphics.Matrix
+ import android.os.Bundle
++import android.util.Base64
+ import android.util.Log
+ import android.view.LayoutInflater
+ import android.view.View
+@@ -22,6 +25,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
+ import androidx.core.content.ContextCompat
+ import androidx.fragment.app.Fragment
+ import androidx.fragment.app.activityViewModels
++import com.facebook.react.bridge.Arguments
+ import com.facebook.react.modules.core.DeviceEventManagerModule
+ import com.google.gson.Gson
+ import com.google.mediapipe.tasks.vision.core.RunningMode
+@@ -30,9 +34,11 @@ import com.tsmediapipe.MainViewModel
+ import com.tsmediapipe.PoseLandmarkerHelper
+ import com.tsmediapipe.ReactContextProvider
+ import com.tsmediapipe.databinding.FragmentMyCameraBinding
++import java.io.ByteArrayOutputStream
+ import java.util.concurrent.ExecutorService
+ import java.util.concurrent.Executors
+ import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicBoolean
+ 
+ class CameraFragment : Fragment(), PoseLandmarkerHelper.LandmarkerListener {
+ 
+@@ -54,6 +60,20 @@ class CameraFragment : Fragment(), PoseLandmarkerHelper.LandmarkerListener {
+   private var cameraProvider: ProcessCameraProvider? = null
+   private var cameraFacing = CameraSelector.LENS_FACING_FRONT
+ 
++  /**
++   * Set by captureNextFrame() and consumed by the very next imageAnalyzer
++   * callback in detectPose(). An AtomicBoolean because it is written from
++   * the React Native module thread (via CameraFragmentManager) and read on
++   * the camera's own background executor thread -- a plain var here would
++   * be a data race.
++   *
++   * This is a one-shot capture path, entirely separate from onLandmark:
++   * pose detection runs on every frame regardless, and a JPEG is only ever
++   * produced on the frame right after a snapshot is explicitly requested
++   * from JS. No frame is captured, encoded, or held in memory otherwise.
++   */
++  private val snapshotRequested = AtomicBoolean(false)
++
+   /** Blocking ML operations are performed using this executor */
+   private lateinit var backgroundExecutor: ExecutorService
+ 
+@@ -225,6 +245,10 @@ class CameraFragment : Fragment(), PoseLandmarkerHelper.LandmarkerListener {
+   }
+ 
+   private fun detectPose(imageProxy: ImageProxy) {
++    if (snapshotRequested.compareAndSet(true, false)) {
++      captureSnapshot(imageProxy)
++    }
++
+     if (this::poseLandmarkerHelper.isInitialized) {
+       poseLandmarkerHelper.detectLiveStream(
+         imageProxy = imageProxy,
+@@ -233,6 +257,65 @@ class CameraFragment : Fragment(), PoseLandmarkerHelper.LandmarkerListener {
+     }
+   }
+ 
++  /**
++   * Called from the phone app's own code (via MediaPipeNativeModule), not
++   * by anything in this library's own JS surface. Arms a one-shot flag;
++   * the actual conversion happens on the camera executor in detectPose so
++   * that JPEG encoding, which is not cheap, never runs on every frame --
++   * only the one frame after a snapshot is explicitly asked for.
++   */
++  fun captureNextFrame() {
++    snapshotRequested.set(true)
++  }
++
++  /**
++   * Converts one ImageProxy to a JPEG and emits it as 'onSnapshot', mirroring
++   * how onResults emits 'onLandmark'. Runs on the same background executor
++   * as pose detection, so it never touches the ImageProxy after
++   * detectLiveStream has been given it -- the proxy is read here first,
++   * before being handed onward, exactly once.
++   */
++  private fun captureSnapshot(imageProxy: ImageProxy) {
++    try {
++      val bitmap = Bitmap.createBitmap(
++        imageProxy.width,
++        imageProxy.height,
++        Bitmap.Config.ARGB_8888
++      )
++      bitmap.copyPixelsFromBuffer(imageProxy.planes[0].buffer.duplicate())
++
++      val matrix = Matrix().apply {
++        postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
++        // Front camera preview is mirrored at the OS level; un-mirror here
++        // so a saved snapshot matches what the person actually looked like,
++        // the same correction PoseLandmarkerHelper applies before inference.
++        if (cameraFacing == CameraSelector.LENS_FACING_FRONT) {
++          postScale(-1f, 1f, imageProxy.width.toFloat(), imageProxy.height.toFloat())
++        }
++      }
++      val rotatedBitmap = Bitmap.createBitmap(
++        bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
++      )
++
++      val stream = ByteArrayOutputStream()
++      rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
++      val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
++
++      activity?.runOnUiThread {
++        val payload = Arguments.createMap().apply {
++          putString("jpegBase64", base64)
++          putInt("width", rotatedBitmap.width)
++          putInt("height", rotatedBitmap.height)
++        }
++        val reactContext = ReactContextProvider.reactApplicationContext
++        reactContext?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
++          ?.emit("onSnapshot", payload)
++      }
++    } catch (exc: Exception) {
++      Log.e(TAG, "Snapshot capture failed", exc)
++    }
++  }
++
+   fun switchCamera() {
+     cameraFacing = if (cameraFacing == CameraSelector.LENS_FACING_BACK) {
+       CameraSelector.LENS_FACING_FRONT
+diff --git a/node_modules/@thinksys/react-native-mediapipe/lib/typescript/src/index.d.ts b/node_modules/@thinksys/react-native-mediapipe/lib/typescript/src/index.d.ts
+index 495edf5..3645e28 100644
+--- a/node_modules/@thinksys/react-native-mediapipe/lib/typescript/src/index.d.ts
++++ b/node_modules/@thinksys/react-native-mediapipe/lib/typescript/src/index.d.ts
+@@ -1,8 +1,14 @@
+ import React, { type MutableRefObject } from 'react';
+ import { type ViewStyle, View } from 'react-native';
++type SnapshotEvent = {
++    jpegBase64: string;
++    width: number;
++    height: number;
++};
+ type TsMediapipeProps = {
+     ref?: MutableRefObject<View | null>;
+     onLandmark?: (event: any) => void;
++    onSnapshot?: (event: SnapshotEvent) => void;
+     face?: boolean;
+     leftArm?: boolean;
+     rightArm?: boolean;
+@@ -22,6 +28,8 @@ type MediapipeComponentProps = TsMediapipeProps & {
+     style?: ViewStyle;
+ };
+ declare const switchCamera: any;
++declare const captureSnapshot: any;
+ declare const TsMediapipeView: React.FC<MediapipeComponentProps>;
+-export { TsMediapipeView as RNMediapipe, switchCamera };
++export { TsMediapipeView as RNMediapipe, switchCamera, captureSnapshot };
++export type { SnapshotEvent };
+ //# sourceMappingURL=index.d.ts.map
+diff --git a/node_modules/@thinksys/react-native-mediapipe/src/index.tsx b/node_modules/@thinksys/react-native-mediapipe/src/index.tsx
+index c76f8fc..00dfaca 100644
+--- a/node_modules/@thinksys/react-native-mediapipe/src/index.tsx
++++ b/node_modules/@thinksys/react-native-mediapipe/src/index.tsx
+@@ -21,9 +21,17 @@ const LINKING_ERROR =
+   '- You rebuilt the app after installing the package\n' +
+   '- You are not using Expo Go\n';
+ 
++type SnapshotEvent = {
++  jpegBase64: string;
++  width: number;
++  height: number;
++};
++
+ type TsMediapipeProps = {
+   ref?: MutableRefObject<View | null>;
+   onLandmark?: (event: any) => void;
++  /** Fires once per captureSnapshot() call, with one JPEG frame. Android only. */
++  onSnapshot?: (event: SnapshotEvent) => void;
+   face?: boolean;
+   leftArm?: boolean;
+   rightArm?: boolean;
+@@ -54,6 +62,16 @@ const switchCamera = isAndroid
+   ? MediaPipeNativeModule.switchCameraMethod
+   : TsMediapipeViewManager.switchCamera;
+ 
++/**
++ * Requests one JPEG frame from the live camera feed, delivered to any
++ * mounted TsMediapipeView's onSnapshot prop. Android only -- iOS has no
++ * equivalent native method in this fork, since nothing in this project
++ * needs it there.
++ */
++const captureSnapshot = isAndroid
++  ? MediaPipeNativeModule.captureSnapshotMethod
++  : () => {};
++
+ const TsMediapipe =
+   UIManager.getViewManagerConfig(ComponentName) != null
+     ? requireNativeComponent<TsMediapipeProps>(ComponentName)
+@@ -71,6 +89,7 @@ const createFragment = (viewId: any) =>
+ const TsMediapipeView: React.FC<MediapipeComponentProps> = (props) => {
+   const {
+     onLandmark,
++    onSnapshot,
+     height = deviceHeight,
+     width = deviceWidth,
+     face = true,
+@@ -102,15 +121,20 @@ const TsMediapipeView: React.FC<MediapipeComponentProps> = (props) => {
+ 
+   useEffect(() => {
+     let subscription: EmitterSubscription;
++    let snapshotSubscription: EmitterSubscription;
+     if (isAndroid) {
+       const mediaPipeEventEmitter = new NativeEventEmitter();
+       subscription = mediaPipeEventEmitter.addListener('onLandmark', (e) => {
+         onLandmark && onLandmark(e);
+       });
++      snapshotSubscription = mediaPipeEventEmitter.addListener('onSnapshot', (e) => {
++        onSnapshot && onSnapshot(e);
++      });
+     }
+ 
+     return () => {
+       subscription?.remove();
++      snapshotSubscription?.remove();
+     };
+   }, []);
+ 
+@@ -148,4 +172,5 @@ const TsMediapipeView: React.FC<MediapipeComponentProps> = (props) => {
+   );
+ };
+ 
+-export { TsMediapipeView as RNMediapipe, switchCamera };
++export { TsMediapipeView as RNMediapipe, switchCamera, captureSnapshot };
++export type { SnapshotEvent };

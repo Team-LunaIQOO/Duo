@@ -141,6 +141,40 @@ Without that the summary is reps and quality only, and the comparison — the
 measurement `06-demo-and-pitch.md` calls the one a physio cares about — is
 silently absent.
 
+**"Hey duo" is live.** Say "hey duo" and Duo reacts, then waits about eight
+seconds for the command; or say "hey duo start" in one breath and it runs
+straight away. The microphone button still works and now arms the next thing
+you say.
+
+Three things the demonstrator has to know:
+
+- **Check the overlay's `wake` row before you go on.** It must say `listening`.
+  If it says `OFF`, this phone has no on-device recognition and the wake phrase
+  disables itself by design — use the button and do not mention the phrase.
+- **The wake phrase holds the microphone open the whole time.** Watch the
+  battery, and if it looks marginal, turn it off in the overlay before you
+  start. Touch and the gesture lose nothing.
+- **Do not say "hey duo" while Duo is speaking.** The microphone is shut while
+  it talks, deliberately, so it cannot hear its own voice. Wait for the line to
+  finish.
+
+The safest staging is still touch for the scripted beats, and voice once,
+deliberately, as the accessibility point.
+
+**Gesture pause is live, and the demonstrator needs to know it.** Holding a
+hand up above shoulder height with a bent elbow, still, for about a second,
+pauses the session — the same thing the Pause button does. Verified on the
+device across 36 arm raises with no false pause during repping, and the reps
+themselves are safe because abduction is a straight arm. But do not stop with a
+bent arm held overhead while narrating, and do not wave at the judges
+mid-set. If it pauses unexpectedly, tap **Resume** and keep going; it is one
+tap and the count is not lost.
+
+Worth showing if there is room: after beat 5, hold a hand up instead of
+reaching for the button. It reads as an accessibility feature rather than a
+gimmick, which is exactly what it is — the affected hand may be the one that
+cannot press a button. Cut it first if the timing is tight.
+
 **Total ~2:20**, inside a 3–5 minute slot.
 
 Beat 1 is the one that separates this from a fitness app — point at the laptop
@@ -158,6 +192,8 @@ keep moving — freezing costs more than the fault does.
 
 | What breaks | What you say | What you do |
 |---|---|---|
+| Session pauses on its own | "It thought I asked it to stop." | Tap **Resume**. The rep count survives. |
+| A voice command does nothing | "Touch is always there." | Use the button. Never repeat a command twice on stage — it reads as broken even when the second one works. |
 | Pose detection drops | "It's telling me it can't see me clearly — that's deliberate, it won't count reps it isn't sure about." | Reposition, carry on. This is a designed behaviour, not a save. |
 | Laptop viewer disconnects | "The laptop is display only — the session doesn't depend on it." | Ignore it. It reconnects on its own. Keep demoing on the phone. |
 | Relay not running | — | `node viewer/relay.js`. The viewer reconnects by itself once it's up. |

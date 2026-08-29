@@ -94,6 +94,38 @@ then add the context:
 
 ---
 
+## Optional: the control-methods answer
+
+Not in the timed script — there is no room — but have it ready, because
+"how does someone with a paralysed arm use this?" is a fair question and the
+answer is good:
+
+> Three ways in, and none of them is the only route to anything. Touch always
+> works. Holding a hand up pauses it — either hand, so it works whichever side
+> is affected. And it answers to its name: "hey duo, start".
+>
+> There's no wake-word model in there. The licensable ones won't ship a custom
+> phrase on a phone, so we let the on-device recogniser that already handles
+> commands listen for the name too. One model instead of two — and because it's
+> on-device, the microphone never streams anywhere. If the phone can't do
+> on-device recognition, the wake phrase switches itself off rather than send
+> the room to a server.
+
+The gesture is worth a sentence because of *how* it is done: it is geometry
+over the same pose landmarks that do the compensation detection. No second
+model, no extra dependency, nothing added to the phone. If a judge asks what it
+costs to run, that is the answer.
+
+If the dev overlay showed `CLOUD` rather than `on-device` for the recogniser
+before you went on, do not say the voice control works offline. The *exercise
+loop* does; that claim is unaffected and it is the one that matters.
+
+Do not say it detects an open palm. It detects a raised-hand posture — the
+hand landmarks are not reliable enough for fingers, and claiming otherwise is
+the kind of small bluff `06-demo-and-pitch.md` warns costs more than it buys.
+
+---
+
 ## 3:45–4:15 — What's next, and what this isn't
 
 > Next steps: a therapist dashboard with history across sessions, more

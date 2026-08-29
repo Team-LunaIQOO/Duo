@@ -24,6 +24,12 @@ export const CONTROL_LINES = {
   cannotSeeUser: "I can't see you clearly.",
   paused: 'Paused. Tap or say start when ready.',
   resumed: 'Good, starting again.',
+  // 03-architecture.md's failure table asks for exactly this shape of
+  // response when listening produces nothing usable: harmless, no blame, and
+  // it leaves the user knowing they were heard but not understood. Saying
+  // nothing at all is worse — it is indistinguishable from a broken
+  // microphone.
+  notUnderstood: "Sorry, I didn't catch that.",
 };
 
 /** Picks the one thing Duo should say right now. Never stacks two corrections. */

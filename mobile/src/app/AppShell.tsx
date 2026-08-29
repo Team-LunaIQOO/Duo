@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSessionController } from './useSessionController';
 import { useSpeakOnChange } from './voice/useSpeakOnChange';
+import { useSpeechCommands } from './voice/useSpeechCommands';
 import { IdleScreen } from './screens/IdleScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { ActiveSessionScreen } from './screens/ActiveSessionScreen';
@@ -32,19 +33,47 @@ export function AppShell() {
   const { session } = controller;
   const proxyEndpoint = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL;
 
-  useSpeakOnChange(session.lastSpoken);
+  // `speaking` closes the microphone for as long as Duo is talking. Without
+  // it the wake session hears Duo say "Paused. Tap or say start when ready",
+  // matches the word start, and resumes the session it just paused.
+  const speaking = useSpeakOnChange(session.lastSpoken);
+
+  // Speech recognition lives here rather than inside useSessionController, so
+  // the controller keeps no dependency on a native module and can still be
+  // driven by the mocks in src/app/mock/ without a device. Every command it
+  // produces goes through handleHeardSpeech, which routes to the same actions
+  // the touch buttons call (02-product-spec.md: voice must never be the only
+  // route to a function, and touch must never fail).
+  const voice = useSpeechCommands({
+    onHeard: controller.handleHeardSpeech,
+    onWake: controller.handleWake,
+    muted: speaking,
+  });
 
   return (
     <View style={styles.container}>
       <VisionCamera
         enabled={controller.cameraNeeded}
         onPoseFrame={controller.handlePoseFrame}
+        onSnapshot={controller.handleSnapshot}
       />
 
-      {session.phase === 'idle' && <IdleScreen onTapToTalk={controller.startSetup} />}
+      {session.phase === 'idle' && (
+        <IdleScreen
+          onTapToTalk={controller.startSetup}
+          voice={voice}
+          faceState={session.faceState}
+          gaze={controller.gaze}
+        />
+      )}
 
       {session.phase === 'setup' && (
-        <SetupScreen framed={controller.framed} onChooseExercise={controller.chooseExercise} />
+        <SetupScreen
+          framed={controller.framed}
+          onChooseExercise={controller.chooseExercise}
+          faceState={session.faceState}
+          gaze={controller.gaze}
+        />
       )}
 
       {(session.phase === 'active' || session.phase === 'resting') && (
@@ -56,10 +85,18 @@ export function AppShell() {
           onResume={controller.resumeSession}
           onSwitchArm={controller.switchArm}
           onEnd={controller.endSession}
+          voice={voice}
+          gaze={controller.gaze}
         />
       )}
 
-      {session.phase === 'ended' && <SummaryScreen session={session} onRestart={controller.restartSession} />}
+      {session.phase === 'ended' && (
+        <SummaryScreen
+          session={session}
+          onRestart={controller.restartSession}
+          gaze={controller.gaze}
+        />
+      )}
 
       <DevOverlay
         session={session}
@@ -69,6 +106,9 @@ export function AppShell() {
         currentArm={controller.currentArm}
         eventLog={controller.eventLog}
         fatigueDebug={controller.fatigueDebug}
+        gestureDebug={controller.gestureDebug}
+        voice={voice}
+        gaze={controller.gaze}
       />
 
       <SecondVoicePanel

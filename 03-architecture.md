@@ -2,7 +2,7 @@
 
 ## Implementation status (as built)
 
-This document is the design. Five things ended up different once the modules
+This document is the design. Seven things ended up different once the modules
 were integrated on the loaner device. They are recorded here so nobody pitches
 the plan instead of the build.
 
@@ -12,6 +12,8 @@ the plan instead of the build.
 | Phone runs a **WebSocket server** | Phone is a **client**; a relay runs on the laptop | No usable WS server library exists for React Native. Full reasoning in `mobile/src/streaming/ARCHITECTURE-NOTE.md`. Message shapes and rates are unchanged. |
 | `FrameMessage` (camera JPEGs to laptop) | **Not implemented** | The bridge exposes `onLandmark` only — no frame or pixel callback. The viewer shows the skeleton, which this document already treats as the primary signal. |
 | Everything offline | Exercise loop offline; **Second Voice needs the internet** | The communication aid calls OpenRouter through a laptop proxy. Gated to `phase !== 'active'`, so the exercise loop is unaffected. See `second-voice-proxy/README.md`. |
+| Wake word engine, then STT | **One continuous on-device recogniser; the phrase is matched in the transcript** | Porcupine cannot be licensed here (warning below), so there is no wake-word model. The STT session is left running instead and `src/app/voice/wakePhrase.ts` matches "hey duo". Gated on on-device recognition — see the note on "Never continuous" below. |
+| Gesture pause as a separate concern | Geometry in `mobile/src/gesture/`, off the same landmark stream | No second model and no new dependency were needed. It reads a raised-hand *posture*, not open fingers — BlazePose's hand points are too weak for that. |
 | `confidence` = detection confidence | Fraction of all 33 landmarks visible | Person A's `toPoseFrame`. Too blunt for seated upper-body work, so framing is re-scoped per exercise in `src/app/vision/useVisionStream.ts`. |
 
 Build and run instructions live in `RUNNING.md`. **Expo Go no longer works** —
@@ -168,7 +170,7 @@ Sending full-rate video would saturate the connection and add latency. Sending l
 | Pose detection | MediaPipe Pose Landmarker (33 landmarks, BlazePose) | **As built:** `@thinksys/react-native-mediapipe`, `pose_landmarker_full.task` bundled in the APK, LIVE_STREAM mode, **CPU delegate** (the bridge hardcodes it). On-device, no network. |
 | Camera frames | react-native-vision-camera with frame processor | The standard route for feeding frames to a native vision module. |
 | Text to speech | Platform TTS (expo-speech or native Android TTS) | Offline capable, zero setup, good enough. |
-| Speech to text | Platform speech recognition, on-device mode | Only runs after wake word fires. Never continuous. |
+| Speech to text | Platform speech recognition, on-device mode | **Amended 29 August: it now runs continuously, and only on-device.** With no licensable wake-word engine the recogniser has to be the thing that hears the phrase, so the two roles collapsed into one. "Never continuous" was written to protect battery and privacy; privacy is preserved by the stronger rule that the microphone is never left open unless recognition is on-device, so no audio leaves the phone. Battery is the real cost, and it is the honest reason the wake phrase can be switched off. |
 | Wake word | See the warning below | |
 | Local LLM | Small quantised model on-device, or scripted fallback | Summary generation only. Never in the real-time loop. |
 | Laptop viewer | Plain HTML page, canvas, WebSocket client | No build step, no framework, no install. Runs from a file. |
@@ -200,6 +202,28 @@ Options:
 - Skip the wake word and use tap-to-talk plus a visible mic button
 
 Verify licensing before anyone spends hours on this. Tap-to-talk is the safe default and the wake word is a stretch goal.
+
+**Decided, 29 August: a wake phrase, but not a wake-word engine.** None of the
+three options above was taken. "Hey duo" works, and Porcupine is not involved —
+the speech recogniser that already serves voice commands is left running
+continuously and the phrase is matched in its transcript
+(`src/app/voice/wakePhrase.ts`). One model, no new dependency, no licence to
+verify.
+
+Two constraints make that acceptable rather than reckless:
+
+1. **The microphone is only left open when recognition runs on-device.** If a
+   phone cannot do on-device recognition the wake phrase disables itself and
+   voice falls back to the tap-to-talk button. Continuously streaming a living
+   room to a cloud recogniser is not a trade this product gets to make.
+2. **Recognition is suspended while Duo speaks**, because one of its own lines
+   contains the word "start".
+
+The cost that remains is battery: a continuous recognition session is far more
+expensive than a dedicated wake-word model would be. It has not been measured
+over a long session, and the wake phrase can be turned off in the dev overlay.
+Tap-to-talk remains, because `02-product-spec.md` requires a visible
+tap-to-talk button regardless of what else works.
 
 ### Warning: Office Kit is not an SDK
 

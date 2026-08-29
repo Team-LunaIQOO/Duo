@@ -1,11 +1,15 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Face } from '../face/Face';
-import type { ExerciseId } from '../../types/contracts';
+import type { ExerciseId, SessionState } from '../../types/contracts';
 import { CONTROL_LINES } from '../feedback/feedbackTable';
+import type { GazeController } from '../face/gaze';
 
 type Props = {
   framed: boolean;
   onChooseExercise: (exercise: ExerciseId, affectedSide: 'left' | 'right') => void;
+  /** Real face state: this is the screen where the wake reaction lands. */
+  faceState: SessionState['faceState'];
+  gaze?: GazeController;
 };
 
 const EXERCISES: { id: ExerciseId; label: string }[] = [
@@ -18,11 +22,11 @@ const EXERCISES: { id: ExerciseId; label: string }[] = [
  * two side-by-side columns to use the landscape width instead of stacking
  * everything under the face.
  */
-export function SetupScreen({ framed, onChooseExercise }: Props) {
+export function SetupScreen({ framed, onChooseExercise, faceState, gaze }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.left}>
-        <Face state="attentive" size={64} />
+        <Face state={faceState} size={64} gaze={gaze} />
         <Text style={styles.status}>{framed ? CONTROL_LINES.framingConfirmed : CONTROL_LINES.framingCheck}</Text>
       </View>
 
