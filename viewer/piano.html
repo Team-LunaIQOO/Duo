@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Duo — air piano</title>
+
+<!--
+  Air piano. A second view onto the same landmark stream the session viewer
+  uses: the phone is still the only camera, the relay is still the only
+  transport, and nothing here talks to the app.
+
+  Two constraints shaped the whole design, and both come from the pose model
+  rather than from taste:
+
+  1. BlazePose gives four points per hand — wrist, thumb, index, pinky — and no
+     finger joints. Ten independent fingers are not available, so each hand is
+     one voice rather than five.
+  2. No camera video ever reaches the laptop (03-architecture.md: the bridge
+     exposes onLandmark and nothing else). So the player sees themselves as a
+     skeleton, and the skeleton has to be good enough to play by.
+
+  Height sets pitch, hand openness sets volume, and a hand below the hips is
+  silent. Continuous like a theremin, but snapped to a pentatonic scale so
+  there is no wrong note to hit — which matters when your instrument is your
+  own arm at two metres.
+
+  Zero dependencies, no build step (viewer/OWNER.md). Web Audio synthesises
+  every sound; there are no samples to load and nothing to install.
+-->
+<style>
+  :root {
+    --bg: #08090c;
+    --ink: #edeae4;
+    --dim: #767b85;
+    --faint: #474c56;
+    --line: rgba(237, 234, 228, 0.09);
+    --bone: #e8dfd0;
+    --left: #7cc4d6;
+    --right: #dda85c;
+
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text",
+            "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", "Segoe UI Mono",
+            Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 14px/1.55 var(--sans);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  header {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    height: 60px;
+    padding: 0 22px;
+    border-bottom: 1px solid var(--line);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand b { font: italic 400 24px/1 var(--serif); }
+  .brand span {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.18em;
+    color: var(--dim); padding-left: 12px; border-left: 1px solid var(--line);
+  }
+
+  .now {
+    font: 400 22px/1 var(--mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
+    color: var(--faint);
+  }
+  .now b { color: var(--ink); font-weight: 400; }
+
+  .bar-right { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+
+  button, select {
+    font: 500 12px/1 var(--sans);
+    color: var(--dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px 13px;
+    cursor: pointer;
+    transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+  }
+  button:hover, select:hover { color: var(--ink); border-color: rgba(237,234,228,0.16); }
+  button.primary { color: var(--bg); background: var(--bone); border-color: var(--bone); }
+  button[aria-pressed="true"] { color: var(--bg); background: var(--bone); border-color: var(--bone); }
+  select { color: var(--ink); }
+  select option { background: #14161c; }
+
+  .status {
+    display: flex; align-items: center; gap: 9px;
+    margin-left: 8px; padding-left: 14px;
+    border-left: 1px solid var(--line);
+    font-size: 11.5px; color: var(--dim); white-space: nowrap;
+  }
+  .eye { position: relative; width: 13px; height: 13px; flex-shrink: 0; }
+  .eye::before { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--faint); transition: background 200ms ease; }
+  .eye.live::before { background: #84a96c; }
+  .eye.waiting::before { background: var(--right); }
+
+  main { position: relative; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  .curtain {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    text-align: center;
+    background: rgba(8, 9, 12, 0.82);
+    transition: opacity 400ms ease;
+  }
+  .curtain[hidden] { display: none; }
+  .curtain strong { font: italic 400 26px/1.2 var(--serif); }
+  .curtain p { margin: 0; color: var(--dim); max-width: 460px; font-size: 13px; }
+  .curtain code {
+    font: 400 11.5px/1 var(--mono); color: var(--faint);
+    border: 1px solid var(--line); border-radius: 5px; padding: 6px 9px;
+  }
+
+  .legend {
+    position: absolute; left: 22px; bottom: 18px;
+    display: flex; gap: 20px; font-size: 11.5px; color: var(--dim);
+    pointer-events: none;
+  }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="brand"><b>Duo</b><span>Air Piano</span></div>
+  <div class="now" id="now">— <b></b></div>
+  <div class="bar-right">
+    <select id="scale" title="Every note in the scale sounds right against the others, so there is no wrong note to land on.">
+      <option value="major">Major pentatonic</option>
+      <option value="minor">Minor pentatonic</option>
+      <option value="chromatic">Chromatic (no snapping)</option>
+    </select>
+    <button id="glide" aria-pressed="false" title="Slide continuously between notes instead of stepping to them.">Glide</button>
+    <button id="sound" class="primary">Enable sound</button>
+    <div class="status">
+      <span class="eye" id="dot"></span>
+      <span id="statusText">connecting…</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <canvas id="canvas"></canvas>
+  <div class="legend">
+    <span><i style="background:var(--left)"></i>left hand</span>
+    <span><i style="background:var(--right)"></i>right hand</span>
+    <span>raise a hand above your hips to sound a note</span>
+  </div>
+  <div class="curtain" id="curtain">
+    <strong id="curtainTitle">Waiting for the phone</strong>
+    <p id="curtainBody">Open the Duo app on the phone. The camera runs from the idle screen, so a session does not need to be started.</p>
+    <code id="wsUrl"></code>
+  </div>
+</main>
+
+<script>
+'use strict';
+
+/*
+ * Duo air piano — Person C.
+ *
+ * Consumes LandmarkMessage from the relay, exactly as viewer/index.html does,
+ * and does no analysis beyond turning positions into sound. The phone is
+ * unaware this page exists.
+ */
+
+// --- connection ------------------------------------------------------------
+
+function viewerUrl() {
+  const override = new URLSearchParams(location.search).get('ws');
+  if (override) return override;
+  if (location.protocol === 'file:') return 'ws://localhost:8787/viewer';
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${location.host}/viewer`;
+}
+
+const WS_URL = viewerUrl();
+document.getElementById('wsUrl').textContent = WS_URL;
+
+const dot = document.getElementById('dot');
+const statusText = document.getElementById('statusText');
+const curtain = document.getElementById('curtain');
+const curtainTitle = document.getElementById('curtainTitle');
+const curtainBody = document.getElementById('curtainBody');
+
+let socket = null;
+let reconnectDelay = 500;
+let landmarks = null;
+let lastLandmarkAt = 0;
+
+function setStatus(kind, text) {
+  dot.className = 'eye' + (kind ? ' ' + kind : '');
+  statusText.textContent = text;
+}
+
+function connect() {
+  setStatus('waiting', 'connecting…');
+  socket = new WebSocket(WS_URL);
+
+  socket.onopen = () => {
+    reconnectDelay = 500;
+    setStatus('waiting', 'waiting for phone');
+  };
+
+  socket.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (msg.type !== 'landmarks' || !Array.isArray(msg.landmarks)) return;
+    landmarks = msg.landmarks;
+    lastLandmarkAt = performance.now();
+    setStatus('live', 'live');
+  };
+
+  socket.onclose = () => {
+    setStatus('', 'relay offline');
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 8000);
+  };
+
+  socket.onerror = () => {};
+}
+
+// --- landmark indices ------------------------------------------------------
+//
+// The nine this page reads, from 04-clinical-logic.md's table plus the hand
+// stubs. There are no finger joints in this model; 17-22 are a thumb, an index
+// and a pinky per hand and nothing else.
+
+const LM = {
+  leftShoulder: 11, rightShoulder: 12,
+  leftWrist: 15, rightWrist: 16,
+  leftPinky: 17, rightPinky: 18,
+  leftIndex: 19, rightIndex: 20,
+  leftThumb: 21, rightThumb: 22,
+  leftHip: 23, rightHip: 24,
+};
+
+const valid = (i) =>
+  landmarks &&
+  Array.isArray(landmarks[i]) &&
+  Number.isFinite(landmarks[i][0]) &&
+  Number.isFinite(landmarks[i][1]);
+
+// --- musical scales --------------------------------------------------------
+//
+// Pentatonic by default, and that is a playing-comfort decision rather than a
+// musical preference: every note in a pentatonic scale sounds consonant against
+// every other, so a hand that drifts between two notes never lands on a wrong
+// one. The instrument here is somebody's arm, seen from two metres, through a
+// pose model that jitters — precision is not on offer, so the scale removes the
+// need for it.
+
+const SCALES = {
+  major: [0, 2, 4, 7, 9],
+  minor: [0, 3, 5, 7, 10],
+  chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+
+/** Two octaves starting at C3, which sits low enough to feel like an instrument. */
+const ROOT_MIDI = 48;
+const OCTAVES = 2;
+
+let scaleName = 'major';
+let glide = false;
+
+function scaleNotes() {
+  const steps = SCALES[scaleName];
+  const notes = [];
+  for (let octave = 0; octave < OCTAVES; octave++) {
+    for (const step of steps) notes.push(ROOT_MIDI + octave * 12 + step);
+  }
+  notes.push(ROOT_MIDI + OCTAVES * 12);
+  return notes;
+}
+
+const midiToHz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
+const midiName = (midi) => `${NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`;
+
+// --- audio -----------------------------------------------------------------
+//
+// Synthesised, not sampled: nothing to download, nothing to install, and it
+// works with no network at all. Two voices, one per hand, each held open for
+// the life of the page and shaped by gain rather than started and stopped —
+// restarting oscillators per note is what produces clicks.
+
+let audio = null;
+
+function buildReverb(ctx) {
+  // A short synthetic room. Generated rather than fetched, for the same reason
+  // the fonts in the session viewer are system fonts: an asset that has to be
+  // downloaded is an asset that fails at the venue.
+  const seconds = 1.8;
+  const length = Math.floor(ctx.sampleRate * seconds);
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+  for (let channel = 0; channel < 2; channel++) {
+    const data = impulse.getChannelData(channel);
+    for (let i = 0; i < length; i++) {
+      // Exponential decay with a little early scatter, which reads as a room
+      // rather than as a delay line.
+      const decay = Math.pow(1 - i / length, 2.4);
+      data[i] = (Math.random() * 2 - 1) * decay * (i < 900 ? 0.6 : 1);
+    }
+  }
+  const convolver = ctx.createConvolver();
+  convolver.buffer = impulse;
+  return convolver;
+}
+
+function createVoice(ctx, destination, colour) {
+  // Two detuned oscillators through a lowpass. The detune is what stops it
+  // sounding like a test tone; the filter follows pitch so high notes do not
+  // turn shrill.
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 1200;
+  filter.Q.value = 0.7;
+
+  const primary = ctx.createOscillator();
+  primary.type = 'triangle';
+  const secondary = ctx.createOscillator();
+  secondary.type = 'sine';
+  secondary.detune.value = colour === 'left' ? -7 : 7;
+
+  // Slow vibrato, deliberately shallow. It makes a held note breathe instead of
+  // sitting perfectly still, which is most of what separates "an instrument"
+  // from "a sine wave".
+  const lfo = ctx.createOscillator();
+  lfo.frequency.value = 5.2;
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = 3.5;
+  lfo.connect(lfoGain);
+  lfoGain.connect(primary.detune);
+  lfoGain.connect(secondary.detune);
+
+  primary.connect(filter);
+  secondary.connect(filter);
+  filter.connect(gain);
+  gain.connect(destination);
+
+  primary.start();
+  secondary.start();
+  lfo.start();
+
+  return { gain, filter, primary, secondary, current: 0 };
+}
+
+/**
+ * A soft mallet strike, played when the held note changes.
+ *
+ * The theremin control is continuous, but a piano articulates: without an
+ * attack, moving between notes is a slide with no event in it and the result
+ * sounds like a siren rather than like playing. This is the compromise —
+ * continuous pitch, but every new note announces itself.
+ */
+function strike(ctx, destination, hz, level) {
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.value = hz * 2;
+
+  const gain = ctx.createGain();
+  const now = ctx.currentTime;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(Math.min(0.22, level * 0.3), now + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+
+  osc.connect(gain);
+  gain.connect(destination);
+  osc.start(now);
+  osc.stop(now + 0.5);
+}
+
+async function enableSound() {
+  if (audio) {
+    await audio.ctx.resume();
+    return;
+  }
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const master = ctx.createGain();
+  master.gain.value = 0.9;
+
+  const reverb = buildReverb(ctx);
+  const wet = ctx.createGain();
+  wet.gain.value = 0.28;
+  const dry = ctx.createGain();
+  dry.gain.value = 0.85;
+
+  master.connect(dry);
+  dry.connect(ctx.destination);
+  master.connect(reverb);
+  reverb.connect(wet);
+  wet.connect(ctx.destination);
+
+  audio = {
+    ctx,
+    master,
+    voices: {
+      left: createVoice(ctx, master, 'left'),
+      right: createVoice(ctx, master, 'right'),
+    },
+  };
+  await ctx.resume();
+}
+
+const btnSound = document.getElementById('sound');
+btnSound.onclick = async () => {
+  await enableSound();
+  btnSound.textContent = 'Sound on';
+  btnSound.classList.remove('primary');
+  btnSound.disabled = true;
+};
+
+document.getElementById('scale').onchange = (event) => {
+  scaleName = event.target.value;
+};
+
+const btnGlide = document.getElementById('glide');
+btnGlide.onclick = () => {
+  glide = !glide;
+  btnGlide.setAttribute('aria-pressed', String(glide));
+};
+
+// --- hand reading ----------------------------------------------------------
+
+/**
+ * What one hand is doing, in musical terms.
+ *
+ * `height` is 0 at the hips and 1 well above the head, because that is the
+ * range an arm actually travels and mapping from the top of the image instead
+ * would waste most of the keyboard on empty air. Silence below the hips is what
+ * gives the player somewhere to rest.
+ */
+function readHand(side) {
+  const wristIndex = side === 'left' ? LM.leftWrist : LM.rightWrist;
+  const shoulderIndex = side === 'left' ? LM.leftShoulder : LM.rightShoulder;
+  const hipIndex = side === 'left' ? LM.leftHip : LM.rightHip;
+  const thumbIndex = side === 'left' ? LM.leftThumb : LM.rightThumb;
+  const pinkyIndex = side === 'left' ? LM.leftPinky : LM.rightPinky;
+  const fingerIndex = side === 'left' ? LM.leftIndex : LM.rightIndex;
+
+  if (!valid(wristIndex) || !valid(shoulderIndex) || !valid(hipIndex)) return null;
+  if (!valid(LM.leftShoulder) || !valid(LM.rightShoulder)) return null;
+
+  const wrist = landmarks[wristIndex];
+  const shoulder = landmarks[shoulderIndex];
+  const hip = landmarks[hipIndex];
+
+  const shoulderWidth = Math.hypot(
+    landmarks[LM.leftShoulder][0] - landmarks[LM.rightShoulder][0],
+    landmarks[LM.leftShoulder][1] - landmarks[LM.rightShoulder][1]
+  );
+  if (!(shoulderWidth > 1e-4)) return null;
+
+  // Torso height is the ruler, so the mapping does not change when the player
+  // sits closer to the phone.
+  const torso = Math.abs(hip[1] - shoulder[1]) || shoulderWidth;
+  const above = (hip[1] - wrist[1]) / (torso * 1.35);
+
+  /*
+   * Openness, as well as this model allows.
+   *
+   * BlazePose's hand points are derived stubs, not a hand model — there are no
+   * finger joints — so the spread between thumb, index and pinky is a coarse
+   * proxy and it is noisy. It is smoothed hard downstream and clamped, and
+   * when those points are not visible the voice falls back to a fixed
+   * mid-volume rather than dropping out. A silent note because a thumb flickered
+   * would feel like a broken instrument.
+   */
+  let openness = 0.55;
+  if (valid(thumbIndex) && valid(pinkyIndex)) {
+    const thumb = landmarks[thumbIndex];
+    const pinky = landmarks[pinkyIndex];
+    let spread = Math.hypot(thumb[0] - pinky[0], thumb[1] - pinky[1]);
+    if (valid(fingerIndex)) {
+      const finger = landmarks[fingerIndex];
+      spread = Math.max(spread, Math.hypot(thumb[0] - finger[0], thumb[1] - finger[1]));
+    }
+    openness = spread / (shoulderWidth * 0.55);
+  }
+
+  return {
+    x: wrist[0],
+    y: wrist[1],
+    height: Math.max(0, Math.min(1, above)),
+    sounding: above > 0.02,
+    openness: Math.max(0, Math.min(1, openness)),
+  };
+}
+
+// --- the instrument --------------------------------------------------------
+
+const smoothed = {
+  left: { height: 0, openness: 0.5, level: 0, note: null },
+  right: { height: 0, openness: 0.5, level: 0, note: null },
+};
+
+/** Exponential smoothing. Landmark jitter is a semitone or two of wobble. */
+const ease = (current, target, factor) => current + (target - current) * factor;
+
+function updateVoice(side, hand) {
+  const state = smoothed[side];
+  const voice = audio ? audio.voices[side] : null;
+
+  if (!hand || !hand.sounding) {
+    state.level = ease(state.level, 0, 0.2);
+    state.note = null;
+    if (voice) {
+      voice.gain.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.06);
+    }
+    return;
+  }
+
+  state.height = ease(state.height, hand.height, 0.25);
+  state.openness = ease(state.openness, hand.openness, 0.12);
+
+  const notes = scaleNotes();
+  const position = state.height * (notes.length - 1);
+
+  let midi;
+  let noteKey;
+  if (glide || scaleName === 'chromatic') {
+    // Continuous between scale degrees. A true theremin slide.
+    const low = notes[Math.floor(position)];
+    const high = notes[Math.min(notes.length - 1, Math.ceil(position))];
+    midi = low + (high - low) * (position - Math.floor(position));
+    noteKey = Math.round(midi);
+  } else {
+    midi = notes[Math.round(position)];
+    noteKey = midi;
+  }
+
+  const level = Math.max(0.12, Math.min(1, state.openness)) * 0.5;
+  state.level = ease(state.level, level, 0.2);
+
+  if (!voice) {
+    state.note = noteKey;
+    return;
+  }
+
+  const now = audio.ctx.currentTime;
+  const hz = midiToHz(midi);
+
+  // Portamento time: a slide when gliding, a quick step when snapped. Never
+  // instant, because an instant frequency jump on a running oscillator clicks.
+  voice.primary.frequency.setTargetAtTime(hz, now, glide ? 0.09 : 0.02);
+  voice.secondary.frequency.setTargetAtTime(hz, now, glide ? 0.09 : 0.02);
+  voice.filter.frequency.setTargetAtTime(Math.min(6000, hz * 5 + 400), now, 0.05);
+  voice.gain.gain.setTargetAtTime(state.level, now, 0.05);
+
+  if (state.note !== noteKey) {
+    if (state.note !== null) strike(audio.ctx, audio.master, hz, state.level);
+    state.note = noteKey;
+  }
+}
+
+// --- drawing ---------------------------------------------------------------
+
+const canvas = document.getElementById('canvas');
+const ctx2d = canvas.getContext('2d');
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.round(rect.width * dpr));
+  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+}
+new ResizeObserver(resize).observe(canvas);
+resize();
+
+const SKELETON = [
+  [11, 12], [11, 23], [12, 24], [23, 24],
+  [11, 13], [13, 15], [12, 14], [14, 16],
+  [15, 17], [15, 19], [15, 21], [16, 18], [16, 20], [16, 22],
+  [23, 25], [25, 27], [24, 26], [26, 28],
+  [0, 11], [0, 12],
+];
+
+function contentRect(w, h, aspect) {
+  let cw = w, ch = w / aspect;
+  if (ch > h) { ch = h; cw = h * aspect; }
+  return { x: (w - cw) / 2, y: (h - ch) / 2, w: cw, h: ch };
+}
+
+const nowEl = document.getElementById('now');
+
+function draw() {
+  requestAnimationFrame(draw);
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = contentRect(w, h, 16 / 9);
+  const stale = performance.now() - lastLandmarkAt > 2000;
+
+  ctx2d.clearRect(0, 0, w, h);
+
+  const ground = ctx2d.createLinearGradient(0, rect.y, 0, rect.y + rect.h);
+  ground.addColorStop(0, '#0c0e14');
+  ground.addColorStop(1, '#07080b');
+  ctx2d.fillStyle = ground;
+  ctx2d.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+  const notes = scaleNotes();
+
+  // The ladder. Every rung is a note you can land on, drawn where your hand has
+  // to be to play it — the instrument is visible, which is the only way to
+  // learn where the notes live when there is nothing to touch.
+  for (let i = 0; i < notes.length; i++) {
+    const t = i / (notes.length - 1);
+    const y = rect.y + rect.h * (1 - t * 0.92) - rect.h * 0.04;
+    const active =
+      smoothed.left.note === notes[i] || smoothed.right.note === notes[i];
+
+    ctx2d.strokeStyle = active ? 'rgba(232,223,208,0.5)' : 'rgba(232,223,208,0.07)';
+    ctx2d.lineWidth = (active ? 1.6 : 1) * dpr;
+    ctx2d.beginPath();
+    ctx2d.moveTo(rect.x + rect.w * 0.06, y);
+    ctx2d.lineTo(rect.x + rect.w * 0.94, y);
+    ctx2d.stroke();
+
+    ctx2d.fillStyle = active ? '#f3ede3' : 'rgba(232,223,208,0.22)';
+    ctx2d.font = `${(active ? 12 : 10.5) * dpr}px ui-monospace, monospace`;
+    ctx2d.fillText(midiName(notes[i]), rect.x + rect.w * 0.955, y + 4 * dpr);
+  }
+
+  if (landmarks && !stale) {
+    const px = (p) => [rect.x + p[0] * rect.w, rect.y + p[1] * rect.h];
+
+    ctx2d.lineCap = 'round';
+    ctx2d.strokeStyle = 'rgba(232,223,208,0.3)';
+    ctx2d.lineWidth = 2.5 * dpr;
+    for (const [a, b] of SKELETON) {
+      if (!valid(a) || !valid(b)) continue;
+      const [x1, y1] = px(landmarks[a]);
+      const [x2, y2] = px(landmarks[b]);
+      ctx2d.beginPath();
+      ctx2d.moveTo(x1, y1);
+      ctx2d.lineTo(x2, y2);
+      ctx2d.stroke();
+    }
+
+    for (const side of ['left', 'right']) {
+      const hand = readHand(side);
+      updateVoice(side, hand);
+      if (!hand) continue;
+
+      const [hx, hy] = px([hand.x, hand.y]);
+      const colour = side === 'left' ? '#7cc4d6' : '#dda85c';
+      const state = smoothed[side];
+
+      // The marker grows with volume, so the player can see how loud they are
+      // as well as hear it.
+      const radius = (10 + state.level * 34) * dpr;
+
+      if (hand.sounding) {
+        const halo = ctx2d.createRadialGradient(hx, hy, 0, hx, hy, radius * 2.4);
+        halo.addColorStop(0, colour + '55');
+        halo.addColorStop(1, colour + '00');
+        ctx2d.fillStyle = halo;
+        ctx2d.beginPath();
+        ctx2d.arc(hx, hy, radius * 2.4, 0, Math.PI * 2);
+        ctx2d.fill();
+      }
+
+      ctx2d.beginPath();
+      ctx2d.arc(hx, hy, radius, 0, Math.PI * 2);
+      ctx2d.fillStyle = hand.sounding ? colour : 'rgba(232,223,208,0.18)';
+      ctx2d.fill();
+    }
+  } else {
+    updateVoice('left', null);
+    updateVoice('right', null);
+  }
+
+  const playing = [smoothed.left.note, smoothed.right.note].filter((n) => n !== null);
+  nowEl.innerHTML = playing.length
+    ? `<b>${playing.map(midiName).join('  ')}</b>`
+    : '—';
+
+  const waiting = !landmarks || stale;
+  curtain.hidden = !waiting;
+  if (waiting) {
+    curtainTitle.textContent = landmarks ? 'Lost the phone' : 'Waiting for the phone';
+    curtainBody.textContent = landmarks
+      ? 'The stream stopped. The relay reconnects on its own.'
+      : 'Open the Duo app on the phone. The camera runs from the idle screen, so a session does not need to be started.';
+  }
+}
+
+requestAnimationFrame(draw);
+connect();
+</script>
+
+</body>
+</html>

@@ -274,6 +274,39 @@ npx expo run:android
 
 Touch and the hand gesture reach every function without it.
 
+## Air piano
+
+A second view on the same landmark stream, at
+**`http://localhost:8787/piano.html`**. Raise a hand above your hips and it
+sounds a note; height sets the pitch, hand openness sets the volume, and a hand
+below the hips is silent so there is somewhere to rest.
+
+Open it, press **Enable sound** (browsers refuse to start audio without a
+click), and stand where the phone can see you. Left and right hands are
+separate voices, so two hands play two notes.
+
+Notes snap to a pentatonic scale by default. That is a playing-comfort decision
+rather than a musical one: every note in a pentatonic scale is consonant with
+every other, so a hand drifting between two of them never lands on a wrong one
+— which matters when the instrument is your own arm, at two metres, through a
+pose model that jitters. **Glide** turns the snapping off for a continuous
+theremin slide, and the scale can be switched to minor or chromatic.
+
+Two things it cannot do, both from the pose model rather than from choice:
+
+- **Not ten fingers.** BlazePose gives four points per hand — wrist, thumb,
+  index, pinky — and no finger joints, so each hand is one voice. Real
+  per-finger play would need a hand model, which is a second model and a
+  different camera.
+- **You are a skeleton, not a video.** No camera frames ever reach the laptop
+  (see "Known gaps"), so the player sees their own outline. It turns out to be
+  enough to play by, because the note ladder is drawn where your hand has to be.
+
+Zero dependencies, like everything in `viewer/`. Every sound is synthesised by
+Web Audio — no samples, nothing to download, and it works with no network at
+all. It reads the stream and never sends anything, so it cannot affect a
+session: you can leave it open during a demo.
+
 ## Gesture pause
 
 **Hold a hand up and the session pauses.** Either hand. The posture is a bent
