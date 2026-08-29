@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useState } from 'react';
 import * as Speech from 'expo-speech';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { OpenRouterProvider } from './openRouterProvider';
 import { PhrasebookFallbackProvider } from './fallbackProvider';
 import { useLocalGemma } from './localGemmaProvider';
@@ -82,9 +82,7 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
             try {
               if (localGemma.downloadStatus === 'downloaded') await localGemma.loadModel();
               else await localGemma.downloadModel();
-            } catch (error) {
-              dispatch({ type: 'ERROR', message: error instanceof Error ? error.message : 'Local model setup failed.' });
-            }
+            } catch { /* downloadError is rendered below without leaking the raw URL */ }
           }}
         >
           <Text style={styles.secondaryText}>
@@ -95,7 +93,14 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
                 : localGemma.downloadStatus === 'downloaded' ? 'Load local Gemma' : 'Download local Gemma'}
           </Text>
         </Pressable>
-        {localGemma.downloadError && <Text style={styles.error}>Local model: {localGemma.downloadError}</Text>}
+        {localGemma.downloadError && <View style={styles.modelError}>
+          <Text style={styles.error}>Local model download needs Gemma license access.</Text>
+          <Text style={styles.help}>Accept Google’s Gemma terms on Hugging Face, then retry. Your token is never stored in this app.</Text>
+          <View style={styles.row}>
+            <Pressable style={styles.secondary} onPress={() => void Linking.openURL('https://huggingface.co/google/gemma-1.1-2b-it-tflite')}><Text style={styles.secondaryText}>Open license page</Text></Pressable>
+            <Pressable style={styles.secondary} onPress={() => void localGemma.downloadModel()}><Text style={styles.secondaryText}>Retry</Text></Pressable>
+          </View>
+        </View>}
         {localGemma.isLoaded && <Text style={styles.localReady}>Using on-device Gemma</Text>}
         <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSpeak }} style={styles.toggle} onPress={() => setAutoSpeak((value) => !value)}><Text style={styles.secondaryText}>{autoSpeak ? '☑ Auto-speak top suggestion' : '☐ Require Speak confirmation'}</Text></Pressable>
         <Pressable style={styles.primary} onPress={() => void submit()}><Text style={styles.primaryText}>Find suggestions</Text></Pressable>
@@ -143,4 +148,5 @@ const styles = StyleSheet.create({
   modelButton: { alignItems: 'center', backgroundColor: '#2b3745', borderRadius: 10, padding: 12 },
   localReady: { color: '#7fe0a0', fontSize: 13 },
   partial: { color: '#c8d9ed', fontStyle: 'italic' },
+  modelError: { gap: 8, padding: 12, borderRadius: 10, backgroundColor: '#321f2b' },
 });
