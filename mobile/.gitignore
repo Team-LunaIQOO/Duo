@@ -21,6 +21,9 @@ expo-env.d.ts
 # Metro
 .metro-health-check*
 
+# Compiled output of the Person C self-tests and viewer/mock-phone.js
+.selftest/
+
 # debug
 npm-debug.*
 yarn-debug.*

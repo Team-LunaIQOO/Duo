@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Duo — session viewer</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #131a23;
+    --panel-2: #1a2430;
+    --line: #26323f;
+    --text: #e6edf3;
+    --dim: #8b9bab;
+    --accent: #4cc2ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  .brand {
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: 0.2px;
+  }
+
+  .brand span {
+    color: var(--dim);
+    font-weight: 400;
+    margin-left: 8px;
+    font-size: 13px;
+  }
+
+  .spacer { flex: 1; }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--dim);
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--bad);
+    box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.15);
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+
+  .dot.live {
+    background: var(--good);
+    box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.15);
+  }
+
+  .dot.waiting {
+    background: var(--warn);
+    box-shadow: 0 0 0 3px rgba(210, 153, 34, 0.15);
+  }
+
+  button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  button:hover { border-color: var(--accent); }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+  main {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 0;
+  }
+
+  .stage {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    background:
+      radial-gradient(ellipse at 50% 40%, #16202b 0%, var(--bg) 70%);
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .overlay-msg {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    text-align: center;
+    gap: 6px;
+    color: var(--dim);
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+
+  .overlay-msg strong {
+    display: block;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .overlay-msg code {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-size: 12px;
+  }
+
+  aside {
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+    padding: 18px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .metric-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--dim);
+    margin-bottom: 4px;
+  }
+
+  .reps {
+    font-size: 52px;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .quality {
+    font-size: 20px;
+    font-weight: 600;
+    text-transform: capitalize;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid transparent;
+  }
+
+  .pill.none  { color: var(--dim);  background: var(--panel-2); border-color: var(--line); }
+  .pill.good  { color: var(--good); background: rgba(63,185,80,0.12);  border-color: rgba(63,185,80,0.35); }
+  .pill.warn  { color: var(--warn); background: rgba(210,153,34,0.12); border-color: rgba(210,153,34,0.35); }
+  .pill.bad   { color: var(--bad);  background: rgba(248,81,73,0.12);  border-color: rgba(248,81,73,0.35); }
+
+  ul.comps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  ul.comps li {
+    padding: 7px 10px;
+    border-radius: 7px;
+    background: rgba(248, 81, 73, 0.1);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    color: #ffb4ae;
+    font-size: 13px;
+  }
+
+  ul.comps li.empty {
+    background: var(--panel-2);
+    border-color: var(--line);
+    color: var(--dim);
+  }
+
+  .divider { height: 1px; background: var(--line); }
+
+  .diag {
+    margin-top: auto;
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  .diag-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .disclaimer {
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.45;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    aside { border-left: none; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">Duo <span>session viewer</span></div>
+  <div class="spacer"></div>
+  <button id="mirror" aria-pressed="false" title="Front cameras are mirrored at the OS level. This flips the drawing only — it does not change what the phone analyses.">Mirror</button>
+  <button id="bg" aria-pressed="true" title="Show or hide the camera frames behind the skeleton">Camera</button>
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">connecting…</span>
+  </div>
+</header>
+
+<main>
+  <div class="stage">
+    <canvas id="canvas"></canvas>
+    <div class="overlay-msg" id="overlay">
+      <strong>Waiting for the phone</strong>
+      <div>Start a session on the device.</div>
+      <div><code id="wsUrl"></code></div>
+    </div>
+  </div>
+
+  <aside>
+    <div>
+      <div class="metric-label">Reps</div>
+      <div class="reps" id="reps">0</div>
+    </div>
+
+    <div>
+      <div class="metric-label">Last rep quality</div>
+      <div class="quality" id="quality">—</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
+      <div class="metric-label">Fatigue</div>
+      <span class="pill none" id="fatigue">none</span>
+    </div>
+
+    <div>
+      <div class="metric-label">Active compensations</div>
+      <ul class="comps" id="comps"><li class="empty">none detected</li></ul>
+    </div>
+
+    <div class="diag">
+      <div class="divider" style="margin-bottom:10px"></div>
+      <div class="diag-row"><span>landmarks/sec</span><span id="lmRate">0.0</span></div>
+      <div class="diag-row"><span>frames/sec</span><span id="frRate">0.0</span></div>
+      <div class="diag-row"><span>messages</span><span id="msgCount">0</span></div>
+      <div class="diag-row"><span>last packet</span><span id="lastSeen">—</span></div>
+    </div>
+
+    <div class="disclaimer">
+      Prototype for demonstration. Not a medical device, not diagnostic, and
+      not clinically validated. Thresholds are hand-tuned, not derived from
+      patient data.
+    </div>
+  </aside>
+</main>
+
+<script>
+'use strict';
+
+/*
+ * Duo laptop viewer — Person C.
+ *
+ * Draws what the phone sends and nothing else. No analysis happens here, per
+ * 03-architecture.md: "The laptop does zero analysis. It draws what the phone
+ * sends. If the laptop disconnects, the session continues unaffected."
+ *
+ * Consumes the three message shapes from mobile/src/types/contracts.ts:
+ *   LandmarkMessage  { type:'landmarks', timestamp, landmarks: [x,y][] }
+ *   FrameMessage     { type:'frame',     timestamp, jpeg: base64 }
+ *   StatsMessage     { type:'stats', reps, quality, compensations[], fatigue }
+ *
+ * No build step, no framework, no install (viewer/OWNER.md).
+ */
+
+// --- connection ------------------------------------------------------------
+
+function viewerUrl() {
+  const override = new URLSearchParams(location.search).get('ws');
+  if (override) return override;
+  if (location.protocol === 'file:') return 'ws://localhost:8787/viewer';
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${location.host}/viewer`;
+}
+
+const WS_URL = viewerUrl();
+document.getElementById('wsUrl').textContent = WS_URL;
+
+const dot = document.getElementById('dot');
+const statusText = document.getElementById('statusText');
+const overlay = document.getElementById('overlay');
+
+let socket = null;
+let reconnectDelay = 500;
+
+function setStatus(kind, text) {
+  dot.className = 'dot' + (kind ? ' ' + kind : '');
+  statusText.textContent = text;
+}
+
+function connect() {
+  setStatus('waiting', 'connecting…');
+
+  try {
+    socket = new WebSocket(WS_URL);
+  } catch {
+    scheduleReconnect();
+    return;
+  }
+
+  socket.onopen = () => {
+    reconnectDelay = 500;
+    setStatus('waiting', 'waiting for phone');
+  };
+
+  socket.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return; // a malformed packet must never take the viewer down
+    }
+    handleMessage(msg);
+  };
+
+  socket.onclose = () => {
+    setStatus('', 'relay offline');
+    scheduleReconnect();
+  };
+
+  // onclose always follows, so reconnection is driven from there alone.
+  socket.onerror = () => {};
+}
+
+function scheduleReconnect() {
+  setTimeout(connect, reconnectDelay);
+  reconnectDelay = Math.min(8000, reconnectDelay * 2);
+}
+
+// --- incoming state --------------------------------------------------------
+
+let landmarks = null;      // [x, y][] in normalised image space
+let bgImage = null;        // decoded <img> of the most recent JPEG
+let lastLandmarkAt = 0;
+let lastAnyAt = 0;
+
+let msgCount = 0;
+let lmTicks = [];
+let frTicks = [];
+
+function handleMessage(msg) {
+  msgCount++;
+  lastAnyAt = performance.now();
+
+  if (msg.type === 'landmarks') {
+    if (!Array.isArray(msg.landmarks)) return;
+    landmarks = msg.landmarks;
+    lastLandmarkAt = lastAnyAt;
+    lmTicks.push(lastAnyAt);
+    setStatus('live', 'live');
+    overlay.style.opacity = '0';
+    return;
+  }
+
+  if (msg.type === 'frame') {
+    if (typeof msg.jpeg !== 'string') return;
+    frTicks.push(lastAnyAt);
+    const img = new Image();
+    // Only swap the displayed image once it has actually decoded, so a
+    // half-loaded frame never blanks the background mid-demo.
+    img.onload = () => { bgImage = img; };
+    img.src = 'data:image/jpeg;base64,' + msg.jpeg;
+    return;
+  }
+
+  if (msg.type === 'stats') {
+    renderStats(msg);
+  }
+}
+
+// --- stats panel -----------------------------------------------------------
+
+const el = {
+  reps: document.getElementById('reps'),
+  quality: document.getElementById('quality'),
+  fatigue: document.getElementById('fatigue'),
+  comps: document.getElementById('comps'),
+};
+
+const FATIGUE_CLASS = { none: 'good', slowing: 'warn', fatigued: 'bad' };
+
+/** 'forward_lean' -> 'Forward lean'. Presentation only, no interpretation. */
+function humanise(s) {
+  const t = String(s).replace(/_/g, ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function renderStats(msg) {
+  if (typeof msg.reps === 'number') el.reps.textContent = msg.reps;
+
+  if (typeof msg.quality === 'string') el.quality.textContent = msg.quality || '—';
+
+  if (typeof msg.fatigue === 'string') {
+    el.fatigue.textContent = msg.fatigue;
+    el.fatigue.className = 'pill ' + (FATIGUE_CLASS[msg.fatigue] || 'none');
+  }
+
+  const comps = Array.isArray(msg.compensations) ? msg.compensations : [];
+  el.comps.replaceChildren();
+  if (comps.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'none detected';
+    el.comps.append(li);
+  } else {
+    for (const c of comps) {
+      const li = document.createElement('li');
+      li.textContent = humanise(c);
+      el.comps.append(li);
+    }
+  }
+}
+
+// --- canvas ----------------------------------------------------------------
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const btnMirror = document.getElementById('mirror');
+const btnBg = document.getElementById('bg');
+let mirrored = false;
+let showBg = true;
+
+btnMirror.onclick = () => {
+  mirrored = !mirrored;
+  btnMirror.setAttribute('aria-pressed', String(mirrored));
+};
+btnBg.onclick = () => {
+  showBg = !showBg;
+  btnBg.setAttribute('aria-pressed', String(showBg));
+};
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.round(r.width * dpr));
+  canvas.height = Math.max(1, Math.round(r.height * dpr));
+}
+new ResizeObserver(resize).observe(canvas);
+resize();
+
+/**
+ * MediaPipe BlazePose 33-landmark connections.
+ * Kept as raw index pairs so it matches the model's own ordering exactly.
+ */
+const CONNECTIONS = [
+  // face
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
+  // arms
+  [11,13],[13,15],[15,17],[15,19],[15,21],[17,19],
+  [12,14],[14,16],[16,18],[16,20],[16,22],[18,20],
+  // torso
+  [11,12],[11,23],[12,24],[23,24],
+  // legs
+  [23,25],[25,27],[27,29],[29,31],[27,31],
+  [24,26],[26,28],[28,30],[30,32],[28,32],
+];
+
+/**
+ * The nine landmarks 04-clinical-logic.md actually measures. Drawn larger and
+ * in the accent colour: the point of the demo is that the geometry runs on
+ * specific joints, not that a generic skeleton is being traced.
+ */
+const KEY_POINTS = new Set([0, 11, 12, 13, 14, 15, 16, 23, 24]);
+
+/** The segments those measurements are built from. Drawn thicker. */
+const KEY_SEGMENTS = new Set(['11-13','13-15','12-14','14-16','11-23','12-24','11-12','23-24']);
+
+const segKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+
+/** Maps the letterboxed image rect that both the JPEG and landmarks share. */
+function contentRect(w, h, aspect) {
+  let cw = w, ch = w / aspect;
+  if (ch > h) { ch = h; cw = h * aspect; }
+  return { x: (w - cw) / 2, y: (h - ch) / 2, w: cw, h: ch };
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Landmarks and JPEG frames are both in the camera's normalised image space,
+  // so they must be mapped through the same rect or the skeleton drifts off
+  // the body.
+  const aspect = bgImage ? bgImage.width / bgImage.height : 3 / 4;
+  const rect = contentRect(w, h, aspect);
+
+  ctx.save();
+  if (mirrored) {
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+  }
+
+  if (bgImage && showBg) {
+    ctx.globalAlpha = 0.55;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(bgImage, rect.x, rect.y, rect.w, rect.h);
+    ctx.globalAlpha = 1;
+  }
+
+  const stale = performance.now() - lastLandmarkAt > 2000;
+
+  if (landmarks && !stale) {
+    const px = (p) => [rect.x + p[0] * rect.w, rect.y + p[1] * rect.h];
+    const valid = (i) =>
+      Array.isArray(landmarks[i]) &&
+      Number.isFinite(landmarks[i][0]) &&
+      Number.isFinite(landmarks[i][1]);
+
+    ctx.lineCap = 'round';
+
+    for (const [a, b] of CONNECTIONS) {
+      if (!valid(a) || !valid(b)) continue;
+      const isKey = KEY_SEGMENTS.has(segKey(a, b));
+      const [x1, y1] = px(landmarks[a]);
+      const [x2, y2] = px(landmarks[b]);
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = isKey ? 'rgba(76,194,255,0.95)' : 'rgba(150,175,200,0.45)';
+      ctx.lineWidth = (isKey ? 4 : 2) * dpr;
+      ctx.stroke();
+    }
+
+    for (let i = 0; i < landmarks.length; i++) {
+      if (!valid(i)) continue;
+      const isKey = KEY_POINTS.has(i);
+      const [x, y] = px(landmarks[i]);
+
+      ctx.beginPath();
+      ctx.arc(x, y, (isKey ? 5.5 : 2.5) * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = isKey ? '#4cc2ff' : 'rgba(190,210,230,0.6)';
+      ctx.fill();
+
+      if (isKey) {
+        ctx.lineWidth = 2 * dpr;
+        ctx.strokeStyle = 'rgba(11,15,20,0.9)';
+        ctx.stroke();
+      }
+    }
+  }
+
+  ctx.restore();
+
+  if (stale && lastLandmarkAt > 0) {
+    ctx.fillStyle = 'rgba(210,153,34,0.9)';
+    ctx.font = `${13 * dpr}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.fillText('signal lost — session continues on the phone', 16 * dpr, 26 * dpr);
+  }
+}
+
+requestAnimationFrame(draw);
+
+// --- diagnostics -----------------------------------------------------------
+
+const lmRateEl = document.getElementById('lmRate');
+const frRateEl = document.getElementById('frRate');
+const msgCountEl = document.getElementById('msgCount');
+const lastSeenEl = document.getElementById('lastSeen');
+
+setInterval(() => {
+  const now = performance.now();
+  const cutoff = now - 2000;
+  lmTicks = lmTicks.filter((t) => t > cutoff);
+  frTicks = frTicks.filter((t) => t > cutoff);
+
+  lmRateEl.textContent = (lmTicks.length / 2).toFixed(1);
+  frRateEl.textContent = (frTicks.length / 2).toFixed(1);
+  msgCountEl.textContent = msgCount;
+
+  if (lastAnyAt === 0) {
+    lastSeenEl.textContent = '—';
+  } else {
+    const age = (now - lastAnyAt) / 1000;
+    lastSeenEl.textContent = age < 1 ? 'now' : age.toFixed(1) + 's ago';
+    if (age > 2 && socket && socket.readyState === WebSocket.OPEN) {
+      setStatus('waiting', 'phone silent');
+      overlay.style.opacity = '1';
+    }
+  }
+}, 500);
+
+connect();
+</script>
+
+</body>
+</html>

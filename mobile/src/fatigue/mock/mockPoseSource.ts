@@ -124,13 +124,16 @@ const lm = (x: number, y: number, z = 0, visibility = 0.95): Landmark => ({
  * Builds a 33-landmark pose whose hip-shoulder-elbow angle on the working side
  * is exactly `angleDeg`.
  *
- * Only the nine landmarks 04-clinical-logic.md actually uses are placed
- * meaningfully; the rest are filled with a low-visibility placeholder so that
- * any consumer reading them without checking visibility fails loudly in
- * testing rather than quietly on device.
+ * The nine landmarks 04-clinical-logic.md actually uses are placed precisely.
+ * The remaining 24 are placed at anatomically plausible positions but marked
+ * LOW VISIBILITY, which serves both purposes at once: the laptop viewer draws
+ * a recognisable full skeleton against mock data, while any *analysis* code
+ * that reads them without checking `visibility` is still consuming landmarks
+ * the mock explicitly declares untrustworthy.
  */
 export function buildPoseLandmarks(angleDeg: number, side: WorkingSide): Landmark[] {
-  const landmarks: Landmark[] = Array.from({ length: 33 }, () => lm(0.5, 0.5, 0, 0.05));
+  const FILLER_VIS = 0.35;
+  const landmarks: Landmark[] = Array.from({ length: 33 }, () => lm(0.5, 0.5, 0, FILLER_VIS));
 
   const shoulderY = 0.4;
   const hipY = 0.72;
@@ -144,6 +147,25 @@ export function buildPoseLandmarks(angleDeg: number, side: WorkingSide): Landmar
   landmarks[LM.rightShoulder] = lm(rightShoulderX, shoulderY);
   landmarks[LM.leftHip] = lm(leftHipX, hipY);
   landmarks[LM.rightHip] = lm(rightHipX, hipY);
+
+  // Face (1-10) and legs (25-32): plausible, low-visibility filler so the
+  // viewer has a full skeleton to draw. Seated exercise, so the legs go
+  // forward and down only a short way. Not used by any analysis.
+  const face: [number, number, number][] = [
+    [1, 0.485, 0.24], [2, 0.478, 0.24], [3, 0.471, 0.24],
+    [4, 0.515, 0.24], [5, 0.522, 0.24], [6, 0.529, 0.24],
+    [7, 0.458, 0.25], [8, 0.542, 0.25],
+    [9, 0.489, 0.275], [10, 0.511, 0.275],
+  ];
+  for (const [i, x, y] of face) landmarks[i] = lm(x, y, 0, FILLER_VIS);
+
+  const legs: [number, number, number][] = [
+    [25, 0.44, 0.86], [26, 0.56, 0.86], // knees
+    [27, 0.43, 0.97], [28, 0.57, 0.97], // ankles
+    [29, 0.43, 0.99], [30, 0.57, 0.99], // heels
+    [31, 0.41, 0.99], [32, 0.59, 0.99], // foot index
+  ];
+  for (const [i, x, y] of legs) landmarks[i] = lm(x, y, 0, FILLER_VIS);
 
   const upperArm = 0.16;
   const forearm = 0.15;
@@ -176,12 +198,29 @@ export function buildPoseLandmarks(angleDeg: number, side: WorkingSide): Landmar
     const wx = sx + rx * (upperArm + forearm);
     const wy = shoulderY + ry * (upperArm + forearm);
 
+    // Hand points (pinky/index/thumb) trail just past the wrist along the arm
+    // direction, so the viewer's hand stubs point the right way as the arm
+    // rotates. Low visibility: filler, like the face and legs.
+    const handAt = (scale: number, spread: number) =>
+      lm(
+        sx + rx * (upperArm + forearm + scale) - ry * spread,
+        shoulderY + ry * (upperArm + forearm + scale) + rx * spread,
+        0,
+        FILLER_VIS
+      );
+
     if (s === 'left') {
       landmarks[LM.leftElbow] = lm(ex, ey);
       landmarks[LM.leftWrist] = lm(wx, wy);
+      landmarks[17] = handAt(0.035, 0.012); // left pinky
+      landmarks[19] = handAt(0.04, -0.006); // left index
+      landmarks[21] = handAt(0.022, -0.016); // left thumb
     } else {
       landmarks[LM.rightElbow] = lm(ex, ey);
       landmarks[LM.rightWrist] = lm(wx, wy);
+      landmarks[18] = handAt(0.035, 0.012); // right pinky
+      landmarks[20] = handAt(0.04, -0.006); // right index
+      landmarks[22] = handAt(0.022, -0.016); // right thumb
     }
   }
 
