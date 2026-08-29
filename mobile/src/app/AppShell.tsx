@@ -62,9 +62,19 @@ export function AppShell() {
   // anything.
   const [secondVoiceOpen, setSecondVoiceOpen] = useState(false);
 
+  // "hey echo, <sentence>" arrives here and is handed to the panel. The id
+  // rises every time so the same sentence said twice runs twice.
+  const [spokenToEcho, setSpokenToEcho] = useState<{ id: number; text: string }>();
+  const echoIdRef = useRef(0);
+  const handleEcho = useCallback((sentence: string) => {
+    echoIdRef.current += 1;
+    setSpokenToEcho({ id: echoIdRef.current, text: sentence });
+  }, []);
+
   const voice = useSpeechCommands({
     onHeard: controller.handleHeardSpeech,
     onWake: controller.handleWake,
+    onEcho: handleEcho,
     muted: speaking || secondVoiceOpen,
   });
 
@@ -132,6 +142,7 @@ export function AppShell() {
       <SecondVoicePanel
         enabled={session.phase !== 'active'}
         onOpenChange={setSecondVoiceOpen}
+        spoken={spokenToEcho}
         endpoint={proxyEndpoint}
         phraseHints={['I need a break.', 'Please help me.', 'I would like some water.']}
       />

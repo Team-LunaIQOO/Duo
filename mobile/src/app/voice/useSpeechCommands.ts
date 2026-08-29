@@ -57,6 +57,8 @@ import { matchWakePhrase } from './wakePhrase';
 const COMMAND_HINTS = [
   'hey duo',
   'duo',
+  'hey echo',
+  'echo',
   'start',
   'begin',
   'pause',
@@ -117,13 +119,19 @@ type Options = {
   /** A bare "hey duo" with no command attached. */
   onWake: () => void;
   /**
+   * "hey echo, <sentence>" — the sentence the user wants spoken for them,
+   * handed straight to Echo. A bare "hey echo" arrives as an empty string,
+   * which opens Echo and waits rather than speaking nothing.
+   */
+  onEcho: (sentence: string) => void;
+  /**
    * True while the app is speaking. Recognition is suspended for the duration,
    * so Duo cannot hear its own voice.
    */
   muted: boolean;
 };
 
-export function useSpeechCommands({ onHeard, onWake, muted }: Options): SpeechCommandsStatus {
+export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): SpeechCommandsStatus {
   // Both callbacks close over session state and change identity on most
   // renders. Held in refs so the native listeners never capture a stale one —
   // the same hazard the vision stream documents, for a different subscription.
@@ -131,6 +139,8 @@ export function useSpeechCommands({ onHeard, onWake, muted }: Options): SpeechCo
   onHeardRef.current = onHeard;
   const onWakeRef = useRef(onWake);
   onWakeRef.current = onWake;
+  const onEchoRef = useRef(onEcho);
+  onEchoRef.current = onEcho;
 
   const [listening, setListening] = useState(false);
   const [available, setAvailable] = useState(false);
@@ -264,6 +274,16 @@ export function useSpeechCommands({ onHeard, onWake, muted }: Options): SpeechCo
     for (const transcript of transcripts) {
       const wake = matchWakePhrase(transcript);
       if (!wake.matched) continue;
+
+      // Echo takes the rest of the sentence verbatim. It is not parsed for
+      // commands: the whole point is that the user is saying something they
+      // want spoken aloud, and a sentence containing the word "stop" must not
+      // stop the session.
+      if (wake.target === 'echo') {
+        disarm();
+        onEchoRef.current(wake.remainder);
+        return;
+      }
 
       const command = wake.remainder ? parseVoiceCommand(wake.remainder) : null;
       if (command) {

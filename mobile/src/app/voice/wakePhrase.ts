@@ -45,14 +45,37 @@ const GREETINGS = new Set(['hey', 'hay', 'hi', 'high', 'ay', 'eh', 'ok', 'okay',
  */
 const AMBIGUOUS_WAKE_TOKENS = new Set(['do', 'due', 'dude', 'don']);
 
+/**
+ * Which assistant was addressed.
+ *
+ * "hey duo" drives the session. "hey echo" hands the rest of the sentence to
+ * Echo, the communication aid, which speaks it back on the user's behalf. Same
+ * grammar, different destination — one wake grammar rather than two.
+ */
+export type WakeTarget = 'duo' | 'echo';
+
 export type WakeMatch = {
-  /** True if the wake phrase was found. */
+  /** True if a wake phrase was found. */
   matched: boolean;
+  /** Which assistant was named. */
+  target: WakeTarget;
   /** Whatever was said after the wake phrase, trimmed. Empty for a bare wake. */
   remainder: string;
 };
 
-const NO_MATCH: WakeMatch = { matched: false, remainder: '' };
+const NO_MATCH: WakeMatch = { matched: false, target: 'duo', remainder: '' };
+
+/**
+ * The names, and how far a recogniser may stray from each.
+ *
+ * "echo" is the easier of the two: it is a real English word, so the language
+ * model returns it intact far more often than it does a made-up name like
+ * "duo". It also has fewer near neighbours worth worrying about.
+ */
+const NAMES: { target: WakeTarget; word: string }[] = [
+  { target: 'duo', word: 'duo' },
+  { target: 'echo', word: 'echo' },
+];
 
 /** Levenshtein distance, capped — only ever asked about short tokens. */
 function editDistance(a: string, b: string): number {
@@ -97,18 +120,22 @@ export function matchWakePhrase(transcript: string): WakeMatch {
     if (!GREETINGS.has(tokens[i])) continue;
 
     const candidate = tokens[i + 1];
-    if (editDistance(candidate, 'duo') > 1) continue;
+    const name = NAMES.find(({ word }) => editDistance(candidate, word) <= 1);
+    if (!name) continue;
 
     const remainder = tokens.slice(i + 2).join(' ');
 
-    // A token that is both one edit from "duo" and an everyday word only
+    // A token that is both one edit from a name and an everyday word only
     // counts when it cannot be part of ordinary speech: nothing after it, or
     // something after it that is unambiguously a command.
-    if (AMBIGUOUS_WAKE_TOKENS.has(candidate)) {
+    //
+    // Echo is exempt: everything after "hey echo" is a sentence to speak, not
+    // a command, so requiring one would reject every real use of it.
+    if (name.target === 'duo' && AMBIGUOUS_WAKE_TOKENS.has(candidate)) {
       if (remainder && parseVoiceCommand(remainder) === null) continue;
     }
 
-    return { matched: true, remainder };
+    return { matched: true, target: name.target, remainder };
   }
 
   return NO_MATCH;

@@ -18,6 +18,14 @@ import {
 } from './feedback/feedbackTable';
 import { generateTemplateSummary } from './summary/generateSummary';
 import { parseVoiceCommand } from './voice/commandParser';
+import {
+  exerciseName,
+  isOtherArmRequest,
+  isSwitchExerciseRequest,
+  otherExercise,
+  parseExerciseRequest,
+} from './voice/navigation';
+import { requestReply } from './voice/replyClient';
 import { FatigueDetector } from '../fatigue';
 import { GesturePauseDetector, type GestureDebug } from '../gesture';
 import { GazeController } from './face/gaze';
@@ -72,9 +80,27 @@ export function useSessionController() {
    * explicit that debug output belongs behind a dev toggle.
    */
   const [eventLog, setEventLog] = useState<string[]>([]);
+
+  /** Whether the last spoken line came from Claude or the local table. */
+  const [replySource, setReplySource] = useState<'claude' | 'local'>('local');
+
+  /**
+   * What Claude is told about the session. Deliberately small: counts and
+   * labels, nothing that could be read back as an assessment.
+   */
+  const contextRef = useRef<Record<string, unknown>>({});
   const logEvent = useCallback((line: string) => {
     setEventLog((prev) => [line, ...prev].slice(0, 8));
   }, []);
+  contextRef.current = {
+    phase: session.phase,
+    exercise: session.exercise,
+    affectedSide: session.affectedSide,
+    reps: session.reps.length,
+    lastQuality: session.reps[session.reps.length - 1]?.quality ?? null,
+    fatigue: session.fatigue,
+  };
+
   const workingSide: 'left' | 'right' | null =
     session.affectedSide === null
       ? null
@@ -258,7 +284,13 @@ export function useSessionController() {
           let next = machine.addRep(s, rep);
 
           const feedbackLine = pickRepFeedback(rep, previousQualityRef.current);
-          if (feedbackLine) next = machine.speak(next, feedbackLine);
+          if (feedbackLine) {
+            next = machine.speak(next, feedbackLine);
+            say(
+              `The user just completed a good rep after a compensated one. Rep ${rep.repNumber}.`,
+              feedbackLine
+            );
+          }
           previousQualityRef.current = rep.quality;
 
           // Only speak when the level actually changes. The detector already
@@ -267,7 +299,14 @@ export function useSessionController() {
           if (signal) {
             next = machine.applyFatigue(next, signal);
             if (signal.level !== 'none') {
-              next = machine.speak(next, FATIGUE_LINES[signal.level]);
+              const line = FATIGUE_LINES[signal.level];
+              next = machine.speak(next, line);
+              say(
+                signal.level === 'fatigued'
+                  ? `The user is fatigued after ${s.reps.length + 1} reps. Offer to stop for today, warmly, crediting what they did.`
+                  : `The user is slowing down after ${s.reps.length + 1} reps. Offer a rest without insisting.`,
+                line
+              );
             }
           }
 
@@ -382,6 +421,30 @@ export function useSessionController() {
     return () => clearInterval(timer);
   }, [isActive]);
 
+
+  /**
+   * Say something, in Duo's own words where possible.
+   *
+   * `fallback` is the hand-written line from feedbackTable.ts and is what gets
+   * spoken if the proxy is slow, closed, or the phone is offline — so every
+   * call site still has a guaranteed line and the session never waits on a
+   * network. The generated line replaces it when it arrives in time.
+   *
+   * Fire-and-forget on purpose: nothing in the session loop awaits this, so a
+   * slow reply delays a sentence and never a rep.
+   */
+  const say = useCallback(
+    (situation: string, fallback: string, urgency: 'urgent' | 'relaxed' = 'relaxed') => {
+      void requestReply({ situation, fallback, urgency, context: contextRef.current }).then(
+        (outcome) => {
+          setSession((s) => machine.speak(s, outcome.text));
+          setReplySource(outcome.generated ? 'claude' : 'local');
+        }
+      );
+    },
+    []
+  );
+
   const startSetup = useCallback(() => {
     // Duo asks the question out loud as well as on screen. 02-product-spec.md
     // step 2: "Duo asks what they are working on today, out loud and in
@@ -409,6 +472,28 @@ export function useSessionController() {
    * correct — the person will have shifted in the chair, and the rep state
    * machine could be holding a half-finished rep on the other arm.
    */
+
+  /**
+   * Move to the other exercise without leaving the session.
+   *
+   * "let us do another exercise". Re-runs calibration and resets the rep
+   * counter, which is correct rather than merely convenient: the tracked angle
+   * changes (hip-shoulder-elbow becomes shoulder-elbow-wrist), the person will
+   * have shifted, and the rep state machine could be mid-rep on the old
+   * movement. useVisionStream already rebuilds on an exercise change, so this
+   * only has to set it.
+   *
+   * Reps already recorded are kept. They happened.
+   */
+  const switchExercise = useCallback(() => {
+    setSession((s) => {
+      const next = otherExercise(s.exercise);
+      const line = `Switching to ${exerciseName(next)}. Sit still for a moment.`;
+      say(`The user asked to switch to a different exercise: ${exerciseName(next)}. Confirm briefly and ask them to hold still while you recalibrate.`, line);
+      return machine.acknowledge(machine.speak({ ...s, exercise: next }, line));
+    });
+  }, [say]);
+
   const switchArm = useCallback(() => {
     setCurrentArm((arm) => (arm === 'affected' ? 'unaffected' : 'affected'));
     setSession((s) =>
@@ -474,6 +559,47 @@ export function useSessionController() {
   // fallback, voice is never the only route to a function).
   const handleHeardSpeech = useCallback(
     (heard: string) => {
+      // Navigation is checked before the command keywords, because "let us do
+      // some left bicep curls" contains "let us go" style filler that the
+      // start-keyword matcher would otherwise claim first.
+      if (isSwitchExerciseRequest(heard)) {
+        logEvent(`VOICE "${heard}" -> switch exercise`);
+        if (session.phase === 'active' || session.phase === 'resting') switchExercise();
+        return;
+      }
+
+      if (isOtherArmRequest(heard)) {
+        logEvent(`VOICE "${heard}" -> other arm`);
+        if (session.phase === 'active' || session.phase === 'resting') switchArm();
+        return;
+      }
+
+      const requested = parseExerciseRequest(heard);
+      if (requested) {
+        logEvent(
+          `VOICE "${heard}" -> ${requested.exercise} ${requested.side ?? 'side not said'}`
+        );
+        if (requested.side) {
+          // Named an exercise and a side: that is a complete instruction, so
+          // start it. Works from idle too — the user should not have to tap
+          // through a setup screen they already spoke past.
+          chooseExercise(requested.exercise, requested.side);
+        } else {
+          // The side is never guessed. Getting it wrong silently inverts the
+          // affected-versus-unaffected comparison, which is the measurement
+          // this whole product is built on (04-clinical-logic.md).
+          const line = `Which arm, left or right?`;
+          setSession((s) =>
+            machine.acknowledge(machine.speak(s.phase === 'idle' ? { ...s, phase: 'setup' } : s, line))
+          );
+          say(
+            `The user asked for ${exerciseName(requested.exercise)} but did not say which arm. Ask which arm, in under six words.`,
+            line
+          );
+        }
+        return;
+      }
+
       const command = parseVoiceCommand(heard);
       if (!command) {
         // Something was said and not understood. Blank means the microphone
@@ -511,7 +637,18 @@ export function useSessionController() {
           break;
       }
     },
-    [session.phase, startSetup, resumeSession, pauseSession, endSession, logEvent]
+    [
+      session.phase,
+      startSetup,
+      resumeSession,
+      pauseSession,
+      endSession,
+      logEvent,
+      chooseExercise,
+      switchExercise,
+      switchArm,
+      say,
+    ]
   );
 
   return {
@@ -526,6 +663,7 @@ export function useSessionController() {
     startSetup,
     chooseExercise,
     switchArm,
+    switchExercise,
     pauseSession,
     resumeSession,
     endSession,
@@ -534,6 +672,7 @@ export function useSessionController() {
     handleWake,
     eventLog,
     gaze: gazeRef.current,
+    replySource,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
     gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,
   };

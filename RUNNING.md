@@ -78,10 +78,22 @@ venue WiFi as the likeliest way to lose the laptop stream.
 **Over WiFi.** Set `LAPTOP_HOST` in `mobile/src/app/streamTarget.ts` to the LAN
 address `relay.js` prints, and make sure both devices are on the same network.
 
-## Second Voice (optional)
+## Echo (the communication aid)
 
-A communication aid for aphasia: it takes a spoken sentence, reconstructs what
-the person meant, and asks them to approve it before speaking it aloud. Speech
+Formerly "Second Voice". A communication aid for aphasia and stutter: it takes
+a spoken sentence, reconstructs what the person meant, and asks them to approve
+it before speaking it aloud.
+
+**Say "hey echo" and then the sentence.** "Hey echo, I would like some water"
+opens Echo and runs that sentence straight through, no tapping. A bare "hey
+echo" opens it and waits. Whatever follows the name is treated as a sentence to
+speak, never as a command — "hey echo, please stop the noise" reaches Echo and
+does **not** stop the exercise session. That case is asserted in the self-test,
+because it is the worst thing this feature could get wrong.
+
+The module still lives at `mobile/src/app/secondVoice/`; only the name the user
+sees changed. Moving the folder would have invalidated the branch this arrived
+on for no benefit. Speech
 input is a hand-written native module (`mobile/modules/duo-speech`, Kotlin over
 Android's `SpeechRecognizer`), and reconstruction runs on-device through
 `expo-llm-mediapipe` when the local model is present, falling back to the
@@ -93,11 +105,43 @@ confirmed, reconstructed by a model. Off is the default for a reason. Lives in
 `mobile/src/app/secondVoice/`, and is gated to `phase !== 'active'` so it never
 runs during an exercise session.
 
-It calls OpenRouter through a proxy that keeps the API key off the phone:
+### The proxy, and Duo's generated speech
+
+**Duo's spoken lines now come from Claude**, not from the fixed strings in
+`feedbackTable.ts`. Those strings are still there and still matter — they are
+the fallback, and they are what you hear whenever the network is slow or gone.
+
+The API key lives on the laptop, never in the app. Anything an Expo build
+inlines is extractable from the APK, so a key shipped in the app is a key given
+away. Put it in a `.env` at the repo root (it is gitignored):
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-haiku-4-5
+```
+
+Then start the proxy — it reads that file itself:
 
 ```bash
-OPENROUTER_API_KEY=sk-... node second-voice-proxy/server.mjs
+node second-voice-proxy/server.mjs
 ```
+
+It prints which routes are live. Point the phone at it over USB, the same way
+as the viewer:
+
+```bash
+adb reverse tcp:8788 tcp:8788
+```
+
+Routes: `/reply` generates Duo's lines, `/reconstruct` powers Echo, and
+`/fall-alert` is unchanged. With `ANTHROPIC_API_KEY` set, Echo uses Claude too;
+without it, it falls back to OpenRouter if `OPENROUTER_API_KEY` is set.
+
+**Every call is allowed to fail.** Requests have a deadline — 700ms for a
+compensation correction, 2.5s for anything else — and when it passes, the
+written line is spoken instead. A correction is worthless once the movement is
+over, so it never waits. If the proxy is not running, Duo sounds exactly like
+it did before and nothing breaks. The dev overlay shows which you are getting.
 
 Then point the app at it:
 
@@ -120,6 +164,21 @@ instruction. Or say it in one breath — **"hey duo start"**, "hey duo stop",
 Commands: start, pause, stop, next, repeat that, how many. Every one routes to
 the same action the matching touch button calls, so the two can never behave
 differently.
+
+**Navigate by voice.** "Hey duo, let's do some left bicep curls" starts elbow
+flexion on the left arm, from idle, without touching the setup screen. "Let's
+do another exercise" switches to the other one mid-session; "now the other arm"
+switches sides.
+
+If you name an exercise without a side — "let's do bicep curls" — Duo asks
+which arm rather than guessing. Guessing would silently invert the
+affected-versus-unaffected comparison, which is the measurement the whole
+product rests on.
+
+Navigation is deliberately **keyword matching, not the language model**: it has
+to work with the proxy down, has to be instant, and must never creatively hear
+"left" as "right". The buttons still do everything, as `02-product-spec.md`
+requires.
 
 **The microphone button still works and is still the fallback.** With the wake
 phrase running the microphone is already open, so tapping the button arms the

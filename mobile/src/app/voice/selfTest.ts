@@ -23,6 +23,12 @@
 
 import { matchWakePhrase } from './wakePhrase';
 import { parseVoiceCommand } from './commandParser';
+import {
+  isOtherArmRequest,
+  isSwitchExerciseRequest,
+  otherExercise,
+  parseExerciseRequest,
+} from './navigation';
 
 declare const process: { exit(code: number): void };
 
@@ -37,12 +43,12 @@ function check(name: string, condition: boolean, detail = ''): void {
   }
 }
 
-function expectWake(transcript: string, remainder: string): void {
+function expectWake(transcript: string, remainder: string, target: 'duo' | 'echo' = 'duo'): void {
   const result = matchWakePhrase(transcript);
   check(
-    `"${transcript}" wakes${remainder ? ` with command "${remainder}"` : ' (bare)'}`,
-    result.matched && result.remainder === remainder,
-    result.matched ? `remainder "${result.remainder}"` : 'no match'
+    `"${transcript}" wakes ${target}${remainder ? ` with "${remainder}"` : ' (bare)'}`,
+    result.matched && result.remainder === remainder && result.target === target,
+    result.matched ? `${result.target} / remainder "${result.remainder}"` : 'no match'
   );
 }
 
@@ -163,6 +169,78 @@ const SPOKEN_LINES = [
 for (const line of SPOKEN_LINES) {
   check(`Duo saying "${line}" does not wake it`, !matchWakePhrase(line).matched);
 }
+
+
+// ---------------------------------------------------------------------------
+console.log('\n6. Echo: "hey echo, <sentence>"');
+// ---------------------------------------------------------------------------
+
+expectWake('hey echo I need some water', 'i need some water', 'echo');
+expectWake('hey echo can you help me please', 'can you help me please', 'echo');
+expectWake('hey echo', '', 'echo');
+expectWake('hi echo I am tired', 'i am tired', 'echo');
+expectWake('hey eco I need the bathroom', 'i need the bathroom', 'echo');
+
+// The one that matters. Echo speaks whatever follows it, so a sentence that
+// happens to contain a command word must reach Echo intact and must NOT be
+// routed to the session controls — "hey echo, please stop the noise" ending
+// the exercise session would be the worst possible failure of this feature.
+const risky = matchWakePhrase('hey echo please stop the noise');
+check(
+  'a sentence containing "stop" goes to Echo, not the session',
+  risky.matched && risky.target === 'echo' && risky.remainder === 'please stop the noise',
+  `${risky.target} / "${risky.remainder}"`
+);
+
+// And the mirror of it: Duo still owns commands.
+const duoStop = matchWakePhrase('hey duo stop');
+check(
+  '"hey duo stop" still reaches the session controls',
+  duoStop.matched && duoStop.target === 'duo' && parseVoiceCommand(duoStop.remainder) === 'stop',
+  `${duoStop.target} / "${duoStop.remainder}"`
+);
+
+// Ordinary speech containing the word echo must not wake it.
+expectNoWake('there was an echo in the room');
+expectNoWake('echo');
+
+// ---------------------------------------------------------------------------
+console.log('\n7. Voice navigation');
+// ---------------------------------------------------------------------------
+
+function expectExercise(heard: string, exercise: string, side: string | null): void {
+  const result = parseExerciseRequest(heard);
+  check(
+    `"${heard}" -> ${exercise} ${side ?? '(no side)'}`,
+    result !== null && result.exercise === exercise && result.side === side,
+    result ? `${result.exercise} ${result.side}` : 'no match'
+  );
+}
+
+expectExercise('lets do some left bicep curls', 'E3', 'left');
+expectExercise('let us do some left bicep curls', 'E3', 'left');
+expectExercise('right bicep curl', 'E3', 'right');
+expectExercise('elbow curls on the left', 'E3', 'left');
+expectExercise('shoulder raises with my right arm', 'E1', 'right');
+expectExercise('left shoulder raise', 'E1', 'left');
+expectExercise('lets do arm raises', 'E1', null);
+expectExercise('bicep curls', 'E3', null);
+
+check('unrelated speech names no exercise', parseExerciseRequest('what time is it') === null);
+check('an empty string names no exercise', parseExerciseRequest('') === null);
+
+check('"lets do another exercise" switches', isSwitchExerciseRequest('lets do another exercise'));
+check('"can we do a different exercise" switches', isSwitchExerciseRequest('can we do a different exercise'));
+check('"something else" switches', isSwitchExerciseRequest('lets do something else'));
+check('a plain exercise request does not switch', !isSwitchExerciseRequest('lets do some left bicep curls'));
+
+check('"now the other arm" switches arms', isOtherArmRequest('now the other arm'));
+check('"switch arms" switches arms', isOtherArmRequest('switch arms'));
+check('"other exercise" is not an arm switch', !isOtherArmRequest('lets do another exercise'));
+
+check('otherExercise flips E1 to E3', otherExercise('E1') === 'E3');
+check('otherExercise flips E3 to E1', otherExercise('E3') === 'E1');
+check('otherExercise from nothing picks E3', otherExercise(null) === 'E3');
 
 console.log(
   failures === 0

@@ -25,14 +25,23 @@ type Props = {
    * Reporting open/closed lets the wake session stand down for as long as this
    * panel is up. Coarser than releasing only while actually recording, and
    * deliberately so: the panel opens well before anyone taps Start listening,
-   * which leaves no race to lose. Someone using Second Voice is not talking to
+   * which leaves no race to lose. Someone using Echo is not talking to
    * the session controls anyway.
    */
   onOpenChange?: (open: boolean) => void;
+  /**
+   * A sentence spoken straight into Echo with "hey echo, ...".
+   *
+   * Carries an id rather than just text so the same sentence said twice still
+   * runs twice — comparing strings would silently swallow the second attempt,
+   * and a person who was not heard the first time will simply repeat
+   * themselves. An empty text opens Echo and waits.
+   */
+  spoken?: { id: number; text: string };
 };
 
 /** Bounded communication flow backed by Android speech recognition. */
-export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenChange }: Props) {
+export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenChange, spoken }: Props) {
   const [open, setOpen] = useState(false);
   const [state, dispatch] = useReducer(secondVoiceReducer, initialSecondVoiceState);
   const requestVersion = useRef(0);
@@ -97,6 +106,28 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenCh
     onOpenChange?.(open);
   }, [open, onOpenChange]);
 
+  /**
+   * "hey echo, I would like some water" — open and run it, no tapping.
+   *
+   * Keyed on the id so a repeated sentence still fires. The submit is deferred
+   * by a tick because the reducer has to reach the listening phase first;
+   * submit() refuses to run in any other phase, by design.
+   */
+  const lastSpokenId = useRef<number | null>(null);
+  useEffect(() => {
+    if (!spoken || !enabled) return;
+    if (lastSpokenId.current === spoken.id) return;
+    lastSpokenId.current = spoken.id;
+
+    setOpen(true);
+    dispatch({ type: 'ACTIVATE' });
+    const text = spoken.text.trim();
+    if (!text) return;
+    dispatch({ type: 'TRANSCRIPT', text });
+    const timer = setTimeout(() => void submit(text), 0);
+    return () => clearTimeout(timer);
+  }, [spoken, enabled]);
+
   useEffect(() => {
     if (state.phase !== 'speaking') return;
     Speech.stop();
@@ -105,12 +136,12 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenCh
 
   if (!enabled) return null;
   if (!open) {
-    return <Pressable style={styles.launch} onPress={() => { setOpen(true); dispatch({ type: 'ACTIVATE' }); }}><Text style={styles.launchText}>Second Voice</Text></Pressable>;
+    return <Pressable style={styles.launch} onPress={() => { setOpen(true); dispatch({ type: 'ACTIVATE' }); }}><Text style={styles.launchText}>Echo</Text></Pressable>;
   }
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.title}>Second Voice</Text>
+      <Text style={styles.title}>Echo</Text>
       {state.phase === 'listening' && <>
         <Text style={styles.help}>Speak naturally; Android will transcribe your words on-device or via its configured speech service.</Text>
         <Pressable style={styles.primary} onPress={() => void (speech.listening ? speech.stop() : speech.start()).catch((error) => dispatch({ type: 'ERROR', message: error instanceof Error ? error.message : 'Speech recognition failed.' }))}><Text style={styles.primaryText}>{speech.listening ? 'Stop listening' : 'Start listening'}</Text></Pressable>
