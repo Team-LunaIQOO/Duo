@@ -5,6 +5,7 @@ import { useMockStream } from './mock/mockStream';
 import { computeMockFatigue } from './mock/mockFatigue';
 import { COMPENSATION_LINES, FATIGUE_LINES, pickRepFeedback } from './feedback/feedbackTable';
 import { generateTemplateSummary } from './summary/generateSummary';
+import { parseVoiceCommand } from './voice/commandParser';
 
 /**
  * Single integration point for the pose/rep/compensation stream.
@@ -89,6 +90,42 @@ export function useSessionController() {
     setSession(machine.restart());
   }, []);
 
+  // Every voice command routes through the same actions the touch buttons
+  // use, so the two control methods can never behave differently (see
+  // 02-product-spec.md "Control methods": touch must always work as the
+  // fallback, voice is never the only route to a function).
+  const handleHeardSpeech = useCallback(
+    (heard: string) => {
+      const command = parseVoiceCommand(heard);
+      if (!command) return;
+
+      switch (command) {
+        case 'start':
+          if (session.phase === 'idle') startSetup();
+          else if (session.phase === 'resting') resumeSession();
+          break;
+        case 'pause':
+          if (session.phase === 'active') pauseSession();
+          break;
+        case 'stop':
+          if (session.phase === 'active' || session.phase === 'resting') endSession();
+          break;
+        case 'how_many':
+          setSession((s) => machine.acknowledge(machine.speak(s, `${s.reps.length} reps so far.`)));
+          break;
+        case 'repeat':
+          setSession((s) => (s.lastSpoken ? machine.acknowledge(s) : s));
+          break;
+        case 'next':
+          // No multi-exercise queue yet — acknowledge so voice feedback
+          // stays honest rather than silently doing nothing.
+          setSession((s) => machine.acknowledge(s));
+          break;
+      }
+    },
+    [session.phase, startSetup, resumeSession, pauseSession, endSession]
+  );
+
   return {
     session,
     framed,
@@ -98,5 +135,6 @@ export function useSessionController() {
     resumeSession,
     endSession,
     restartSession,
+    handleHeardSpeech,
   };
 }
