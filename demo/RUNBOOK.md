@@ -127,7 +127,19 @@ From `06-demo-and-pitch.md`, with what has to be true on screen for each.
 | 3 Clean reps | 0:30 | Rep count climbing (reps 1–4) | Skeleton tracking, reps panel |
 | 4 Compensation | 0:30 | Eyes narrow, correction spoken + captioned (rep 5) | Compensation appears in panel |
 | 5 Fatigue | 0:20 | Tired eyes, offer to rest (reps 6–8) | Fatigue pill goes amber then red |
-| 6 Summary | 0:20 | Spoken summary | Summary file lands via Office Kit |
+| 6 Summary | 0:20 | Spoken summary | **Office Kit transfer is not built** |
+
+**Beat 1 works from a cold idle screen.** The camera now starts at idle rather
+than at setup, so the laptop already shows a live skeleton while the phone is
+just a blinking face — which is the whole point of the beat. It used to be
+blank until someone tapped the screen.
+
+**Beat 6 needs both arms.** The affected-versus-unaffected line only appears if
+reps were recorded on each side. Tap **Other arm** during the session, let it
+recalibrate for two seconds, and do two or three reps with the other arm.
+Without that the summary is reps and quality only, and the comparison — the
+measurement `06-demo-and-pitch.md` calls the one a physio cares about — is
+silently absent.
 
 **Total ~2:20**, inside a 3–5 minute slot.
 

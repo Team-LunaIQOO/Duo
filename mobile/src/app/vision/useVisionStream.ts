@@ -116,7 +116,17 @@ function visibleCount(landmarks: Landmark[], indices: number[]): number {
 export function useVisionStream(
   active: boolean,
   exercise: ExerciseId | null,
-  affectedSide: 'left' | 'right' | null,
+  /** The physical arm currently doing the work. */
+  workingSide: 'left' | 'right' | null,
+  /**
+   * The clinical label to stamp on reps from that arm.
+   *
+   * Separate from `workingSide` because they are different things: the working
+   * side is anatomy, this is which arm the therapist cares about. Both are
+   * needed to produce the affected-versus-unaffected comparison, which cannot
+   * be computed at all if every rep is labelled the same way.
+   */
+  repSide: RepEvent['side'],
   callbacks: VisionCallbacks
 ): { handlePoseFrame: (frame: PoseFrame) => void; status: VisionStatus; resetVision: () => void } {
   const callbacksRef = useRef(callbacks);
@@ -134,8 +144,10 @@ export function useVisionStream(
   activeRef.current = active;
   const exerciseRef = useRef(exercise);
   exerciseRef.current = exercise;
-  const sideRef = useRef<'left' | 'right'>(affectedSide ?? 'left');
-  sideRef.current = affectedSide ?? 'left';
+  const sideRef = useRef<'left' | 'right'>(workingSide ?? 'left');
+  sideRef.current = workingSide ?? 'left';
+  const repSideRef = useRef<RepEvent['side']>(repSide);
+  repSideRef.current = repSide;
 
   const pipelineRef = useRef<PosePipeline | null>(null);
   const calibrationFramesRef = useRef<PoseFrame[]>([]);
@@ -176,7 +188,7 @@ export function useVisionStream(
       framedRef.current = false;
       setFramed(false);
     }
-  }, [active, exercise, affectedSide, resetVision]);
+  }, [active, exercise, workingSide, repSide, resetVision]);
 
   const handlePoseFrame = useCallback((frame: PoseFrame) => {
     setSeenAnyPose(true);
@@ -254,7 +266,7 @@ export function useVisionStream(
         baseline,
         exercise: toPipelineExercise(exerciseRef.current),
         workingSide: sideRef.current,
-        repSide: 'affected',
+        repSide: repSideRef.current,
       });
       calibrationFramesRef.current = [];
       setCalibrating(false);

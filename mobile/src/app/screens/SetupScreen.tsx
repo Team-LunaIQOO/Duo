@@ -28,23 +28,39 @@ export function SetupScreen({ framed, onChooseExercise }: Props) {
 
       <View style={styles.right}>
         <Text style={styles.prompt}>{CONTROL_LINES.wake}</Text>
+        {/*
+          The start buttons are disabled until the person is framed, because a
+          session started without a usable baseline makes every compensation
+          reading meaningless. That block used to be invisible — the buttons
+          looked identical either way, so tapping them simply did nothing and
+          read as the app being broken. Say why instead.
+        */}
+        {!framed && (
+          <Text style={styles.blockedHint}>
+            Sit so your head, shoulders and hips are all in view.
+          </Text>
+        )}
         {EXERCISES.map((exercise) => (
           <View key={exercise.id} style={styles.exerciseRow}>
             <Text style={styles.exerciseLabel}>{exercise.label}</Text>
             <View style={styles.sideButtons}>
               <Pressable
-                style={styles.sideButton}
+                style={[styles.sideButton, !framed && styles.sideButtonDisabled]}
                 onPress={() => onChooseExercise(exercise.id, 'left')}
                 disabled={!framed}
               >
-                <Text style={styles.sideButtonText}>Left</Text>
+                <Text style={[styles.sideButtonText, !framed && styles.sideButtonTextDisabled]}>
+                  Left
+                </Text>
               </Pressable>
               <Pressable
-                style={styles.sideButton}
+                style={[styles.sideButton, !framed && styles.sideButtonDisabled]}
                 onPress={() => onChooseExercise(exercise.id, 'right')}
                 disabled={!framed}
               >
-                <Text style={styles.sideButtonText}>Right</Text>
+                <Text style={[styles.sideButtonText, !framed && styles.sideButtonTextDisabled]}>
+                  Right
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -106,5 +122,18 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
+  },
+  sideButtonDisabled: {
+    backgroundColor: '#141414',
+    opacity: 0.45,
+  },
+  sideButtonTextDisabled: {
+    color: '#888',
+  },
+  blockedHint: {
+    color: '#d29922',
+    fontSize: 13,
+    marginTop: -8,
+    marginBottom: 4,
   },
 });

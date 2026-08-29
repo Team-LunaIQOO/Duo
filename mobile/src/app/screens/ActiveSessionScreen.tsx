@@ -4,8 +4,13 @@ import type { SessionState } from '../../types/contracts';
 
 type Props = {
   session: SessionState;
+  /** Which arm is being exercised, so the user can see the label their reps carry. */
+  currentArm: 'affected' | 'unaffected';
+  /** True while the two-second baseline is being captured. */
+  calibrating: boolean;
   onPause: () => void;
   onResume: () => void;
+  onSwitchArm: () => void;
   onEnd: () => void;
 };
 
@@ -20,29 +25,52 @@ const QUALITY_COLOR: Record<string, string> = {
  * quality as a colour not a number, caption showing what Duo just said.
  * No debug output, no landmark coordinates, no confidence scores here.
  */
-export function ActiveSessionScreen({ session, onPause, onResume, onEnd }: Props) {
+export function ActiveSessionScreen({
+  session,
+  currentArm,
+  calibrating,
+  onPause,
+  onResume,
+  onSwitchArm,
+  onEnd,
+}: Props) {
   const lastRep = session.reps[session.reps.length - 1];
   const qualityColor = lastRep ? QUALITY_COLOR[lastRep.quality] : '#444';
   const isPaused = session.phase === 'resting';
 
+  // Reps are counted per arm, so showing the total would make the count jump
+  // backwards in meaning when the user switches sides.
+  const repsThisArm = session.reps.filter((r) => r.side === currentArm).length;
+
   return (
     <View style={styles.container}>
-      <Pressable style={styles.sideButton} onPress={isPaused ? onResume : onPause}>
-        <Text style={styles.sideButtonText}>{isPaused ? 'Resume' : 'Pause'}</Text>
-      </Pressable>
+      <View style={styles.sideColumn}>
+        <Pressable style={styles.sideButton} onPress={isPaused ? onResume : onPause}>
+          <Text style={styles.sideButtonText}>{isPaused ? 'Resume' : 'Pause'}</Text>
+        </Pressable>
+        <Pressable style={styles.sideButton} onPress={onSwitchArm}>
+          <Text style={styles.sideButtonText}>Other arm</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.center}>
         <Face state={session.faceState} size={48} />
         <View style={styles.statsRow}>
-          <Text style={styles.repCount}>{session.reps.length}</Text>
+          <Text style={styles.repCount}>{repsThisArm}</Text>
           <View style={[styles.qualityDot, { backgroundColor: qualityColor }]} />
         </View>
+        <Text style={styles.armLabel}>
+          {currentArm === 'affected' ? 'Affected arm' : 'Other arm'}
+          {calibrating ? ' · sit still' : ''}
+        </Text>
         {session.lastSpoken && <Text style={styles.caption}>{session.lastSpoken}</Text>}
       </View>
 
-      <Pressable style={[styles.sideButton, styles.endButton]} onPress={onEnd}>
-        <Text style={styles.sideButtonText}>End</Text>
-      </Pressable>
+      <View style={styles.sideColumn}>
+        <Pressable style={[styles.sideButton, styles.endButton]} onPress={onEnd}>
+          <Text style={styles.sideButtonText}>End</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -81,6 +109,14 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     maxWidth: 360,
+  },
+  sideColumn: {
+    gap: 12,
+  },
+  armLabel: {
+    color: '#8b9bab',
+    fontSize: 13,
+    letterSpacing: 0.4,
   },
   sideButton: {
     backgroundColor: '#222',

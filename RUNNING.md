@@ -103,6 +103,26 @@ entirely on the phone. Without the proxy the panel degrades to a local fallback
 provider rather than breaking. Be precise about this when pitching: the
 exercise session works in airplane mode, the whole product does not.
 
+## Dev overlay
+
+**Tap the top-left corner three times.** A panel shows session phase, framing,
+which arm is being counted, reps per arm, live fatigue ratios, and a log of the
+last eight rep / compensation / fatigue events.
+
+Off by default, and awkward to open on purpose so it cannot appear by accident
+on stage. `02-product-spec.md` requires the patient-facing screen to carry no
+debug output, which is why it lives behind a toggle rather than on the screen.
+
+Use it to check the two features that are otherwise invisible: lean forward
+deliberately and watch for a `COMP forward_lean` line, and do a long set and
+watch the fatigue ratios move. A detector that never fires and one that works
+look identical from the outside without it.
+
+**If the start buttons on the setup screen are greyed out**, that is deliberate
+— a session cannot start until head, shoulders and hips are all visible,
+because compensation is measured as deviation from a baseline captured then.
+Sit further back.
+
 ## Ports
 
 | Port | Process | Notes |
