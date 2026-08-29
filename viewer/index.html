@@ -505,14 +505,21 @@ resize();
  * Kept as raw index pairs so it matches the model's own ordering exactly.
  */
 const CONNECTIONS = [
-  // face
-  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
-  // arms
+  // face — every pair among the 9 landmarks BlazePose gives (0 nose,
+  // 1-3 left eye, 4-6 right eye, 7-8 ears, 9-10 mouth), so the face reads
+  // as a connected frame rather than the minimal left-eye/right-eye chain.
+  // This is the full landmark set the pose model provides; a denser mesh
+  // would need a separate face-landmark model, which is out of scope here.
+  [0,1],[0,4],[0,9],[0,10],
+  [1,2],[2,3],[3,7],[1,7],
+  [4,5],[5,6],[6,8],[4,8],
+  [7,9],[8,10],[9,10],[3,9],[6,10],
+  // arms — shoulder to wrist plus the hand fan (index/pinky/thumb)
   [11,13],[13,15],[15,17],[15,19],[15,21],[17,19],
   [12,14],[14,16],[16,18],[16,20],[16,22],[18,20],
-  // torso
-  [11,12],[11,23],[12,24],[23,24],
-  // legs
+  // torso, including the cross-body diagonals for a solid ribcage outline
+  [11,12],[11,23],[12,24],[23,24],[11,24],[12,23],
+  // legs — hip to ankle plus the foot triangle (heel/toe)
   [23,25],[25,27],[27,29],[29,31],[27,31],
   [24,26],[26,28],[28,30],[30,32],[28,32],
 ];
@@ -528,6 +535,60 @@ const KEY_POINTS = new Set([0, 11, 12, 13, 14, 15, 16, 23, 24]);
 const KEY_SEGMENTS = new Set(['11-13','13-15','12-14','14-16','11-23','12-24','11-12','23-24']);
 
 const segKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+
+/**
+ * Limb segments to trace as an outline rather than a single centre line, so
+ * the body reads as a structured silhouette while staying pure stroke —
+ * no fill, no shapes. Each pair gets a width in normalised units (fraction
+ * of shoulder width), tapered from the proximal to the distal joint the
+ * way a real limb tapers.
+ */
+const OUTLINE_LIMBS = [
+  [11, 13, 0.34, 0.28], [13, 15, 0.26, 0.18], // left arm
+  [12, 14, 0.34, 0.28], [14, 16, 0.26, 0.18], // right arm
+  [15, 19, 0.16, 0.1], [16, 20, 0.16, 0.1],   // hands (wrist to middle finger)
+  [23, 25, 0.4, 0.32], [25, 27, 0.3, 0.2],    // left leg
+  [24, 26, 0.4, 0.32], [26, 28, 0.3, 0.2],    // right leg
+  [27, 31, 0.18, 0.12], [28, 32, 0.18, 0.12], // feet (ankle to toe)
+];
+
+/** Torso outline: shoulders across the top, hips across the bottom. */
+const OUTLINE_TORSO = [11, 12, 24, 23];
+
+function drawOutline(ctx, px, landmarks, valid, shoulderWidthPx) {
+  ctx.strokeStyle = 'rgba(76,194,255,0.75)';
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+
+  if (OUTLINE_TORSO.every(valid)) {
+    ctx.beginPath();
+    OUTLINE_TORSO.forEach((i, n) => {
+      const [x, y] = px(landmarks[i]);
+      n === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  for (const [a, b, wStart, wEnd] of OUTLINE_LIMBS) {
+    if (!valid(a) || !valid(b)) continue;
+    const [x1, y1] = px(landmarks[a]);
+    const [x2, y2] = px(landmarks[b]);
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len; // unit normal to the bone
+    const r1 = (wStart * shoulderWidthPx) / 2;
+    const r2 = (wEnd * shoulderWidthPx) / 2;
+
+    ctx.beginPath();
+    ctx.moveTo(x1 + nx * r1, y1 + ny * r1);
+    ctx.lineTo(x2 + nx * r2, y2 + ny * r2);
+    ctx.lineTo(x2 - nx * r2, y2 - ny * r2);
+    ctx.lineTo(x1 - nx * r1, y1 - ny * r1);
+    ctx.closePath();
+    ctx.stroke();
+  }
+}
 
 /** Maps the letterboxed image rect that both the JPEG and landmarks share. */
 function contentRect(w, h, aspect) {
@@ -579,6 +640,52 @@ function draw() {
       Number.isFinite(landmarks[i][1]);
 
     ctx.lineCap = 'round';
+
+    if (valid(11) && valid(12)) {
+      const [sx1, sy1] = px(landmarks[11]);
+      const [sx2, sy2] = px(landmarks[12]);
+      const shoulderWidthPx = Math.hypot(sx2 - sx1, sy2 - sy1);
+      drawOutline(ctx, px, landmarks, valid, shoulderWidthPx);
+
+      // Neck + head frame: anchors the head to the torso even when the face
+      // landmarks (eyes/ears) are unreliable near the top edge of frame —
+      // the nose is the single most robust face point. Drawn as a tapered
+      // band like the limbs, not a bare line, plus a radial frame from the
+      // nose out to whichever of the eye-outer/ear points are visible, so
+      // the head reads as a small connected structure rather than one line
+      // ending at the mouth.
+      if (valid(0)) {
+        const midX = (sx1 + sx2) / 2;
+        const midY = (sy1 + sy2) / 2;
+        const [nx, ny] = px(landmarks[0]);
+        const dx = nx - midX, dy = ny - midY;
+        const len = Math.hypot(dx, dy) || 1;
+        const nrmX = -dy / len, nrmY = dx / len;
+        const neckR1 = (0.22 * shoulderWidthPx) / 2;
+        const neckR2 = (0.14 * shoulderWidthPx) / 2;
+
+        ctx.strokeStyle = 'rgba(76,194,255,0.75)';
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(midX + nrmX * neckR1, midY + nrmY * neckR1);
+        ctx.lineTo(nx + nrmX * neckR2, ny + nrmY * neckR2);
+        ctx.lineTo(nx - nrmX * neckR2, ny - nrmY * neckR2);
+        ctx.lineTo(midX - nrmX * neckR1, midY - nrmY * neckR1);
+        ctx.closePath();
+        ctx.stroke();
+
+        // Head frame: nose out to eye-outer (3, 6) and ear (7, 8) points.
+        for (const i of [3, 6, 7, 8]) {
+          if (!valid(i)) continue;
+          const [hx, hy] = px(landmarks[i]);
+          ctx.beginPath();
+          ctx.moveTo(nx, ny);
+          ctx.lineTo(hx, hy);
+          ctx.stroke();
+        }
+      }
+    }
 
     for (const [a, b] of CONNECTIONS) {
       if (!valid(a) || !valid(b)) continue;
