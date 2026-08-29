@@ -3,6 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useState } from 'react';
 import { Button, StyleSheet, Text, View } from 'react-native';
 import { MediaPipePoseView, PosePipeline } from './src/vision';
+import { angleBetween } from './src/vision/geometry';
+import { LandmarkIndex } from './src/vision/landmarks';
 import type { PoseFrame } from './src/types/contracts';
 
 export default function App() {
@@ -13,6 +15,20 @@ export default function App() {
     () => new PosePipeline({ exercise: 'shoulder_abduction', workingSide: 'right' }),
     []
   );
+  const armAngles = latestFrame
+    ? {
+        left: angleBetween(
+          latestFrame.landmarks[LandmarkIndex.leftHip],
+          latestFrame.landmarks[LandmarkIndex.leftShoulder],
+          latestFrame.landmarks[LandmarkIndex.leftElbow]
+        ),
+        right: angleBetween(
+          latestFrame.landmarks[LandmarkIndex.rightHip],
+          latestFrame.landmarks[LandmarkIndex.rightShoulder],
+          latestFrame.landmarks[LandmarkIndex.rightElbow]
+        ),
+      }
+    : null;
   const onPoseFrame = useCallback((frame: PoseFrame) => {
     pipeline.push(frame);
     setLatestFrame(frame);
@@ -42,6 +58,9 @@ export default function App() {
           {latestFrame ? `${latestFrame.landmarks.length} landmarks · ${(latestFrame.confidence * 100).toFixed(0)}% confidence` : 'Waiting for landmarks…'}
         </Text>
         <Text style={styles.detail}>Frames received: {frameCount}</Text>
+        <Text style={styles.detail}>
+          {armAngles ? `Shoulder angles — L: ${armAngles.left.toFixed(0)}° · R: ${armAngles.right.toFixed(0)}°` : 'Shoulder angles unavailable'}
+        </Text>
         <Text style={styles.detail}>Mirror mode: none (raise right arm to validate)</Text>
       </View>
       <StatusBar style="auto" />
