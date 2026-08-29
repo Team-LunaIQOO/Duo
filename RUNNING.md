@@ -80,8 +80,12 @@ address `relay.js` prints, and make sure both devices are on the same network.
 
 ## Second Voice (optional)
 
-A communication aid for aphasia: it reconstructs the user's intended sentence
-from a rough transcript and asks them to approve it before speaking. There is
+A communication aid for aphasia: it takes a spoken sentence, reconstructs what
+the person meant, and asks them to approve it before speaking it aloud. Speech
+input is a hand-written native module (`mobile/modules/duo-speech`, Kotlin over
+Android's `SpeechRecognizer`), and reconstruction runs on-device through
+`expo-llm-mediapipe` when the local model is present, falling back to the
+OpenRouter proxy and then to a local phrasebook. There is
 now an **opt-in auto-speak toggle** that skips that approval and speaks the top
 suggestion directly — off by default, and per session. Be careful describing
 this one: with auto-speak on, the phone says a sentence the user has not
@@ -158,6 +162,14 @@ its own lines is "Paused. Tap or say start when ready", which contains the word
 and resume.
 
 To switch the wake phrase off, open the dev overlay and tap the `wake` row.
+
+**The wake phrase stands down while Second Voice is open.** That panel now runs
+its own recogniser (`mobile/modules/duo-speech`), and Android's recognition
+service serves one session at a time — a second caller gets
+`ERROR_RECOGNIZER_BUSY`. Since Second Voice is gated to `phase !== 'active'`,
+which is exactly when the wake phrase is listening, the two would otherwise
+collide every time. Opening the panel releases the microphone; closing it hands
+it back. Saying "hey duo" with the panel open does nothing, by design.
 
 Grant the microphone without the dialog:
 

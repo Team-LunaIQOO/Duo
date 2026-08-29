@@ -1,5 +1,5 @@
 import { StyleSheet, View } from 'react-native';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSessionController } from './useSessionController';
 import { useSpeakOnChange } from './voice/useSpeakOnChange';
@@ -45,10 +45,17 @@ export function AppShell() {
   // produces goes through handleHeardSpeech, which routes to the same actions
   // the touch buttons call (02-product-spec.md: voice must never be the only
   // route to a function, and touch must never fail).
+  // Second Voice brings its own recogniser (modules/duo-speech). Android
+  // serves one recognition session at a time, so the wake phrase stands down
+  // while that panel is open — see the note on SecondVoicePanel's
+  // onOpenChange. useState's setter is stable, so this does not re-subscribe
+  // anything.
+  const [secondVoiceOpen, setSecondVoiceOpen] = useState(false);
+
   const voice = useSpeechCommands({
     onHeard: controller.handleHeardSpeech,
     onWake: controller.handleWake,
-    muted: speaking,
+    muted: speaking || secondVoiceOpen,
   });
 
   return (
@@ -114,6 +121,7 @@ export function AppShell() {
 
       <SecondVoicePanel
         enabled={session.phase !== 'active'}
+        onOpenChange={setSecondVoiceOpen}
         endpoint={proxyEndpoint}
         phraseHints={['I need a break.', 'Please help me.', 'I would like some water.']}
       />

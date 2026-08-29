@@ -12,10 +12,27 @@ type Props = {
   enabled: boolean;
   endpoint?: string;
   phraseHints?: string[];
+  /**
+   * Told whenever this panel opens or closes.
+   *
+   * The app holds a continuous speech-recognition session for the "hey duo"
+   * wake phrase, and Android's recognition service serves one session at a
+   * time — a second caller gets ERROR_RECOGNIZER_BUSY. This panel runs its own
+   * recogniser through the duo-speech native module, and it is gated to
+   * `phase !== 'active'`, which is exactly when the wake phrase is listening.
+   * So the two would collide by design.
+   *
+   * Reporting open/closed lets the wake session stand down for as long as this
+   * panel is up. Coarser than releasing only while actually recording, and
+   * deliberately so: the panel opens well before anyone taps Start listening,
+   * which leaves no race to lose. Someone using Second Voice is not talking to
+   * the session controls anyway.
+   */
+  onOpenChange?: (open: boolean) => void;
 };
 
 /** Bounded communication flow backed by Android speech recognition. */
-export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props) {
+export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenChange }: Props) {
   const [open, setOpen] = useState(false);
   const [state, dispatch] = useReducer(secondVoiceReducer, initialSecondVoiceState);
   const requestVersion = useRef(0);
@@ -72,6 +89,13 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
   useEffect(() => {
     if (!enabled && open) close();
   }, [enabled, open]);
+
+  // Driven off the state rather than the two call sites that change it: a
+  // future third way to close the panel would otherwise silently leave the
+  // wake phrase muted for the rest of the session.
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
 
   useEffect(() => {
     if (state.phase !== 'speaking') return;
