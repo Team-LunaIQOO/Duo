@@ -421,21 +421,33 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
       }
 
       if (wake.remainder) {
-        // Any complete sentence after an unambiguous "hey duo" goes to the
-        // intent layer. The old version dispatched only when the local keyword
-        // parser already understood the remainder, which prevented Claude from
-        // ever seeing the natural phrasings it exists to interpret.
-        // Ambiguous wake tokens such as "hey do" remain protected inside
-        // matchWakePhrase, so ordinary conversation is not routed here.
+        /*
+         * Anything said after the name is an instruction, and every one of
+         * them goes on to be understood — by the model first, by the keyword
+         * parser if the model cannot be reached.
+         *
+         * This used to ask parseVoiceCommand whether the remainder was a
+         * command, and only forward it if the answer was yes. That gate made
+         * sense when keywords were the only thing downstream. Once the model
+         * became the thing that understands language, the gate meant every
+         * sentence the KEYWORD list did not recognise was dropped here and
+         * never reached the model at all — so "hey duo, lets do curls with my
+         * weak arm" woke Duo up and did nothing, which is precisely the
+         * phrasing the model exists to handle.
+         *
+         * The transcript is now passed on whatever it says. Deciding what a
+         * sentence means is not this function's job.
+         */
         disarm();
         onHeardRef.current(wake.remainder);
-      } else {
-        // A bare "hey duo". Duo reacts and waits for the instruction.
-        arm();
-        if (now - lastWakeAt.current > 1500) {
-          lastWakeAt.current = now;
-          onWakeRef.current();
-        }
+        return;
+      }
+
+      // A bare "hey duo". Duo reacts and waits for the instruction.
+      arm();
+      if (now - lastWakeAt.current > 1500) {
+        lastWakeAt.current = now;
+        onWakeRef.current();
       }
       return;
     }

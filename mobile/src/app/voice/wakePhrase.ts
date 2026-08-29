@@ -140,3 +140,27 @@ export function matchWakePhrase(transcript: string): WakeMatch {
 
   return NO_MATCH;
 }
+
+/**
+ * What should happen to a matched wake phrase.
+ *
+ * Extracted from the speech hook so the decision can be asserted. It was
+ * previously inline and gated on whether the KEYWORD parser recognised the
+ * remainder, which quietly dropped every sentence the keyword list did not
+ * know — including the natural phrasings the language model exists to handle.
+ * That was invisible: the wake fired, the eyes blinked, and nothing happened.
+ */
+export type WakeRoute =
+  | { kind: 'echo'; sentence: string }
+  | { kind: 'instruction'; sentence: string }
+  | { kind: 'bare' }
+  | { kind: 'ignore' };
+
+export function routeWakeMatch(match: WakeMatch): WakeRoute {
+  if (!match.matched) return { kind: 'ignore' };
+  if (match.target === 'echo') return { kind: 'echo', sentence: match.remainder };
+  // Any remainder is an instruction. Whether it MEANS anything is decided
+  // downstream, never here.
+  if (match.remainder) return { kind: 'instruction', sentence: match.remainder };
+  return { kind: 'bare' };
+}
