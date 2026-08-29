@@ -14,6 +14,7 @@ type Props = {
 /** Bounded communication flow. Typed input is the temporary STT seam until native speech capture is added. */
 export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props) {
   const [open, setOpen] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(false);
   const [state, dispatch] = useReducer(secondVoiceReducer, initialSecondVoiceState);
   const fallback = useMemo(() => new PhrasebookFallbackProvider(), []);
   const provider = useMemo(
@@ -45,6 +46,10 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
         context: {},
       });
       dispatch({ type: 'RESULT', transcript, candidates: result.candidates });
+      if (autoSpeak && result.candidates[0]) {
+        dispatch({ type: 'SELECT', id: result.candidates[0].id });
+        dispatch({ type: 'CONFIRM_SPEAK' });
+      }
     } catch {
       dispatch({ type: 'ERROR', message: 'Suggestions are unavailable. Try again or use the phrase directly.' });
     }
@@ -56,6 +61,7 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
       {state.phase === 'listening' && <>
         <Text style={styles.help}>Type or paste the transcript for now.</Text>
         <TextInput autoFocus value={state.transcript} onChangeText={(text) => dispatch({ type: 'TRANSCRIPT', text })} onSubmitEditing={submit} placeholder="What did you mean to say?" placeholderTextColor="#777" style={styles.input} />
+        <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSpeak }} style={styles.toggle} onPress={() => setAutoSpeak((value) => !value)}><Text style={styles.secondaryText}>{autoSpeak ? '☑ Auto-speak top suggestion' : '☐ Require Speak confirmation'}</Text></Pressable>
         <Pressable style={styles.primary} onPress={submit}><Text style={styles.primaryText}>Find suggestions</Text></Pressable>
       </>}
       {state.phase === 'processing' && <Text style={styles.help}>Finding possible sentences…</Text>}
@@ -71,7 +77,7 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
         <TextInput value={state.draft} onChangeText={(text) => dispatch({ type: 'EDIT', draft: text })} style={styles.input} multiline />
         <Pressable style={styles.primary} onPress={() => dispatch({ type: 'CONFIRM_SPEAK' })}><Text style={styles.primaryText}>Confirm and speak</Text></Pressable>
       </>}
-      {state.phase === 'speaking' && <><Text style={styles.spoken}>{state.text}</Text><Text style={styles.help}>Spoken only after your confirmation.</Text></>}
+      {state.phase === 'speaking' && <><Text style={styles.spoken}>{state.text}</Text><Text style={styles.help}>{autoSpeak ? 'Auto-speak is enabled for this session.' : 'Spoken after your confirmation.'}</Text></>}
       {state.phase === 'error' && <Text style={styles.error}>{state.message}</Text>}
       <Pressable style={styles.cancel} onPress={() => { Speech.stop(); dispatch({ type: 'CANCEL' }); setOpen(false); }}><Text style={styles.secondaryText}>Cancel</Text></Pressable>
     </View>
@@ -89,6 +95,7 @@ const styles = StyleSheet.create({
   primaryText: { color: '#fff', fontWeight: '700' },
   secondary: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#2b3745', borderRadius: 10, padding: 14 },
   secondaryText: { color: '#d7e2ee', fontWeight: '600' },
+  toggle: { alignSelf: 'flex-start', paddingVertical: 8 },
   candidate: { borderWidth: 1, borderColor: '#405063', borderRadius: 10, padding: 14 },
   selected: { borderColor: '#54a5ff', backgroundColor: '#1a3858' },
   candidateText: { color: '#fff', fontSize: 17 },
