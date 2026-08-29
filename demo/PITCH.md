@@ -94,6 +94,28 @@ then add the context:
 
 ---
 
+## Optional: the control-methods answer
+
+Not in the timed script — there is no room — but have it ready, because
+"how does someone with a paralysed arm use this?" is a fair question and the
+answer is good:
+
+> Three ways in, and none of them is the only route to anything. Touch always
+> works. Holding a hand up pauses it, either hand, so it works whichever side
+> is affected. Voice commands are parsed but not wired to a recogniser yet —
+> that is honest, it is on the list.
+
+The gesture is worth a sentence because of *how* it is done: it is geometry
+over the same pose landmarks that do the compensation detection. No second
+model, no extra dependency, nothing added to the phone. If a judge asks what it
+costs to run, that is the answer.
+
+Do not say it detects an open palm. It detects a raised-hand posture — the
+hand landmarks are not reliable enough for fingers, and claiming otherwise is
+the kind of small bluff `06-demo-and-pitch.md` warns costs more than it buys.
+
+---
+
 ## 3:45–4:15 — What's next, and what this isn't
 
 > Next steps: a therapist dashboard with history across sessions, more

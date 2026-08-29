@@ -2,7 +2,7 @@
 
 ## Implementation status (as built)
 
-This document is the design. Five things ended up different once the modules
+This document is the design. Six things ended up different once the modules
 were integrated on the loaner device. They are recorded here so nobody pitches
 the plan instead of the build.
 
@@ -12,6 +12,7 @@ the plan instead of the build.
 | Phone runs a **WebSocket server** | Phone is a **client**; a relay runs on the laptop | No usable WS server library exists for React Native. Full reasoning in `mobile/src/streaming/ARCHITECTURE-NOTE.md`. Message shapes and rates are unchanged. |
 | `FrameMessage` (camera JPEGs to laptop) | **Not implemented** | The bridge exposes `onLandmark` only — no frame or pixel callback. The viewer shows the skeleton, which this document already treats as the primary signal. |
 | Everything offline | Exercise loop offline; **Second Voice needs the internet** | The communication aid calls OpenRouter through a laptop proxy. Gated to `phase !== 'active'`, so the exercise loop is unaffected. See `second-voice-proxy/README.md`. |
+| Gesture pause as a separate concern | Geometry in `mobile/src/gesture/`, off the same landmark stream | No second model and no new dependency were needed. It reads a raised-hand *posture*, not open fingers — BlazePose's hand points are too weak for that. |
 | `confidence` = detection confidence | Fraction of all 33 landmarks visible | Person A's `toPoseFrame`. Too blunt for seated upper-body work, so framing is re-scoped per exercise in `src/app/vision/useVisionStream.ts`. |
 
 Build and run instructions live in `RUNNING.md`. **Expo Go no longer works** —
