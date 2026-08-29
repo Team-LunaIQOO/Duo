@@ -33,7 +33,15 @@ export function toPoseFrame(
   timestamp: number,
   mirrorMode: MirrorMode = 'none'
 ): PoseFrame | null {
-  const event = payload as { landmarks?: unknown } | null;
+  let decoded: unknown = payload;
+  if (typeof payload === 'string') {
+    try {
+      decoded = JSON.parse(payload) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  const event = decoded as { landmarks?: unknown } | null;
   const raw = Array.isArray(event) ? event : event?.landmarks;
   if (!Array.isArray(raw) || raw.length < LANDMARK_COUNT) return null;
 
