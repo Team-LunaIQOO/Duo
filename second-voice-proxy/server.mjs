@@ -1,6 +1,16 @@
 import http from 'node:http';
 
-const port = Number(process.env.SECOND_VOICE_PORT ?? 8787);
+// 8788, NOT 8787. The laptop relay (viewer/relay.js) owns 8787, and both run
+// on the laptop at the same time during a demo.
+//
+// This is not a theoretical clash. On Windows the two bind successfully at
+// once, because the relay listens on [::]:8787 and this server listened on
+// 0.0.0.0:8787 — different address families, no EADDRINUSE, no error printed.
+// Requests then split by address family: ::1 reached the relay, 127.0.0.1
+// reached this proxy. `adb reverse tcp:8787` forwards over IPv4, so the phone's
+// stream to the viewer hit this server, got a 404, and the laptop skeleton
+// silently never appeared.
+const port = Number(process.env.SECOND_VOICE_PORT ?? 8788);
 const apiKey = process.env.OPENROUTER_API_KEY;
 const model = process.env.OPENROUTER_MODEL ?? 'openai/gpt-4o';
 
