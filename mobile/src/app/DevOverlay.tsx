@@ -150,6 +150,7 @@ export function DevOverlay({
       */}
       <Text style={styles.row}>
         voice {voice.available ? (voice.usingOnDevice ? 'on-device' : 'CLOUD') : 'unavailable'}
+        {voice.onDeviceNote ? ` (${voice.onDeviceNote})` : ''}
         {voice.listening ? ' · mic open' : ''}
         {voice.armed ? ' · ARMED' : ''}
         {voice.lastError ? ` · err ${voice.lastError}` : ''}

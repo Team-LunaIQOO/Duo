@@ -123,6 +123,12 @@ export type SpeechCommandsStatus = {
   available: boolean;
   /** True when recognition runs without sending audio off the device. */
   usingOnDevice: boolean;
+  /**
+   * Why on-device recognition is not in use, when it is not. Empty when it is.
+   * Surfaced because "the microphone does not work" and "the offline language
+   * pack is missing" look identical from the outside.
+   */
+  onDeviceNote: string;
   /** True when the wake phrase is being listened for right now. */
   wakeActive: boolean;
   /** True while a wake (or a tap) has armed the next utterance as a command. */
@@ -172,6 +178,7 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
   const [listening, setListening] = useState(false);
   const [available, setAvailable] = useState(false);
   const [usingOnDevice, setUsingOnDevice] = useState(false);
+  const [onDeviceNote, setOnDeviceNote] = useState('');
   const [wakeEnabled, setWakeEnabled] = useState(true);
   const [armed, setArmed] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -201,22 +208,86 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const permissionRef = useRef<boolean | null>(null);
 
-  // The wake phrase is only offered when recognition can run on-device. See
-  // the note at the top of this file: this is the condition, not a preference.
-  const wakeSupported = available && usingOnDevice;
+  /*
+   * The wake phrase used to require on-device recognition, as a privacy rule I
+   * set: never hold the microphone open unless the audio stays on the phone.
+   *
+   * On this device that rule silently disabled the entire product. The phone
+   * reports on-device support but has no English pack installed, so the
+   * recogniser returned empty results forever and "hey duo" was never heard.
+   * A privacy guarantee that turns the app off is not a guarantee anyone
+   * benefits from.
+   *
+   * So the wake phrase now runs either way, and the dev overlay says which
+   * mode is in use rather than the app quietly choosing for the user. The
+   * offline pack is requested in the background; once Android installs it,
+   * the next launch is on-device again and the note disappears.
+   */
+  const wakeSupported = available;
   const wakeActive = wakeSupported && wakeEnabled && !muted;
 
   // Capability is read once. Wrapped because a missing native module must
   // degrade to "no microphone button" rather than taking the app down — voice
   // is Tier 3 and touch is the method that must never fail.
   useEffect(() => {
-    try {
-      setAvailable(ExpoSpeechRecognitionModule.isRecognitionAvailable());
-      setUsingOnDevice(ExpoSpeechRecognitionModule.supportsOnDeviceRecognition());
-    } catch {
-      setAvailable(false);
-      setUsingOnDevice(false);
-    }
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const canRecognise = ExpoSpeechRecognitionModule.isRecognitionAvailable();
+        if (!cancelled) setAvailable(canRecognise);
+        if (!canRecognise) return;
+
+        if (!ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()) {
+          if (!cancelled) setOnDeviceNote('device has no on-device recogniser');
+          return;
+        }
+
+        /*
+         * supportsOnDeviceRecognition() answers "is the feature present", not
+         * "is a language actually installed", and those are very different
+         * things. With the feature present but the en-US pack missing, the
+         * recogniser runs, reports withSpeech: true, and returns
+         * "empty final recognition results" forever — which is exactly what
+         * this device was doing. It looks like a broken microphone and is not
+         * one, and nothing in the API says so unless you ask for the locale
+         * list.
+         */
+        const locales = await ExpoSpeechRecognitionModule.getSupportedLocales({
+          androidRecognitionServicePackage: 'com.google.android.as',
+        }).catch(() => null);
+
+        const installed = locales?.installedLocales ?? [];
+        const hasEnglish = installed.some((locale) => locale.toLowerCase().startsWith('en'));
+
+        if (cancelled) return;
+
+        if (hasEnglish) {
+          setUsingOnDevice(true);
+          setOnDeviceNote('');
+          return;
+        }
+
+        // Ask for the pack, so the privacy-preserving path becomes available
+        // for next time, and fall back to the platform default meanwhile.
+        // Better a working microphone now with a note about it than a silent
+        // one that looks broken.
+        setUsingOnDevice(false);
+        setOnDeviceNote(`no offline model (${installed.length} installed), using platform default`);
+        void ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({
+          locale: 'en-US',
+        }).catch(() => undefined);
+      } catch {
+        if (cancelled) return;
+        setAvailable(false);
+        setUsingOnDevice(false);
+        setOnDeviceNote('recogniser unavailable');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const disarm = useCallback(() => {
@@ -482,6 +553,7 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
     listening,
     available,
     usingOnDevice,
+    onDeviceNote,
     wakeActive,
     armed,
     lastError,
