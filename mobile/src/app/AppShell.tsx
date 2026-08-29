@@ -9,6 +9,7 @@ import { ActiveSessionScreen } from './screens/ActiveSessionScreen';
 import { SummaryScreen } from './screens/SummaryScreen';
 import { VisionCamera } from './vision/VisionCamera';
 import { SecondVoicePanel } from './secondVoice';
+import { DevOverlay } from './DevOverlay';
 
 /**
  * Composition root. Mounted directly by App.tsx.
@@ -49,13 +50,26 @@ export function AppShell() {
       {(session.phase === 'active' || session.phase === 'resting') && (
         <ActiveSessionScreen
           session={session}
+          currentArm={controller.currentArm}
+          calibrating={controller.calibrating}
           onPause={controller.pauseSession}
           onResume={controller.resumeSession}
+          onSwitchArm={controller.switchArm}
           onEnd={controller.endSession}
         />
       )}
 
       {session.phase === 'ended' && <SummaryScreen session={session} onRestart={controller.restartSession} />}
+
+      <DevOverlay
+        session={session}
+        framed={controller.framed}
+        calibrating={controller.calibrating}
+        ready={controller.ready}
+        currentArm={controller.currentArm}
+        eventLog={controller.eventLog}
+        fatigueDebug={controller.fatigueDebug}
+      />
 
       <SecondVoicePanel
         enabled={session.phase !== 'active'}

@@ -73,11 +73,12 @@ then add the context:
 
 ## 3:00–3:45 — How it works
 
-> Everything you just saw ran on the phone. The pose landmarks come from a
-> model running on the device's NPU. No cloud, no network calls. It works in
-> airplane mode — which matters, because these users often have poor
-> connectivity, and because video of someone's body in their own home
-> shouldn't be leaving the device in the first place.
+> Everything you just saw ran on the phone. The pose landmarks come from
+> Google's BlazePose model — the full variant, bundled in the APK, running
+> on-device through MediaPipe Tasks. No cloud, no network calls. The whole
+> exercise session works in airplane mode — which matters, because these users
+> often have poor connectivity, and because video of someone's body in their
+> own home shouldn't be leaving the device in the first place.
 >
 > The compensation detection is real geometry off that landmark stream.
 > Angles and distance ratios, normalised per person against a calibration
@@ -125,12 +126,36 @@ It happens. Keep, in this order:
 
 1. The adherence number and the trunk-compensation sentence (0:00–0:30).
 2. Beat 4 of the demo, live. Nothing else from the demo.
-3. "On-device, no cloud, works in airplane mode."
+3. "On-device, no cloud — the exercise session works in airplane mode."
 4. "Weekend prototype, hand-tuned thresholds, not validated."
 
 Drop the technical section and the roadmap. Never drop the honesty line.
 
 ---
+
+## ⚠️ Do not claim NPU inference
+
+`03-architecture.md` and the original draft of this pitch both said the model
+runs on the Snapdragon NPU. **It does not.** Verified in the bridge's source:
+
+```kotlin
+var currentDelegate: Int = DELEGATE_CPU   // PoseLandmarkerHelper.kt
+```
+
+The ThinkSys wrapper hardcodes the CPU delegate and exposes no way to change
+it from JavaScript. It supports `Delegate.GPU` internally, but selecting it
+means patching or forking the package.
+
+So say **"on-device"**, which is completely true and is what the argument
+actually rests on — no cloud, the exercise session works in airplane mode, and
+video never leaves the phone. Do not say NPU, or GPU, or "accelerated". A judge who asks "which
+delegate?" and gets a wrong answer costs you more than the word was ever
+worth, and `06-demo-and-pitch.md` warns exactly this about claims you cannot
+defend.
+
+If someone asks about hardware acceleration, the honest and rather good answer
+is: *"CPU today. The delegate is one line, but we didn't want to claim a
+number we hadn't measured on this device."*
 
 ## Things not to say
 
@@ -147,3 +172,9 @@ going on:
 - Don't oversell the AI. It is on-device pose estimation plus geometry.
   Calling it "AI-powered rehabilitation intelligence" makes it sound *less*
   credible, not more.
+- Don't say NPU, GPU, or "hardware accelerated" — see the section above.
+- Don't say "everything works offline" while Second Voice is in the demo. That
+  feature calls OpenRouter through a laptop proxy. **"The exercise session
+  works in airplane mode"** is the true and equally strong version. If a judge
+  asks what needs a connection, answer plainly: the communication aid does,
+  the rehab loop does not, and that split was deliberate.

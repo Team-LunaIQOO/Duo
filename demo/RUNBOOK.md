@@ -16,6 +16,20 @@ connected before the judges arrive. Do not do setup in front of them."*
 
 Budget 5 minutes. In order:
 
+**Three processes now run on the laptop**, not one. Ports matter — they were
+made to collide once already:
+
+| Process | Port | Needed for |
+|---|---|---|
+| `node viewer/relay.js` | **8787** | The laptop viewer. Required for beat 1. |
+| `npx expo start --dev-client` (Metro) | **8081** | Only for a dev build. Not needed if the APK is a release build. |
+| `node second-voice-proxy/server.mjs` | **8788** | Second Voice only. Skip it if you are not demoing that. |
+
+Do not let the proxy take 8787. It used to default there, and the two servers
+do **not** fail loudly when they collide — on Windows they bind on different
+address families and requests split silently, so `adb reverse` sends the phone
+to the wrong one and the viewer just stays blank. Fixed, but worth knowing.
+
 1. **Same network.** Phone and laptop on the same WiFi. Venue WiFi may isolate
    clients from each other — see "If the network blocks it" below. Test this
    the moment you arrive at the venue, not at the table.
@@ -24,6 +38,14 @@ Budget 5 minutes. In order:
    node viewer/relay.js
    ```
    It prints the viewer URL and the `ws://` URL for the phone. Note the LAN IP.
+
+   If demoing Second Voice, start its proxy too, in another terminal:
+   ```
+   OPENROUTER_API_KEY=... node second-voice-proxy/server.mjs
+   ```
+   It refuses to start without a key. **This is the one part of the product
+   that needs the internet** — check connectivity before relying on it, and
+   have the fallback path in mind if the venue WiFi is unusable.
 3. **Open the viewer**: `http://localhost:8787/` on the laptop. Full screen it.
    The status dot goes amber ("waiting for phone").
 4. **Point the phone at the laptop.** Enter the LAN IP in the app. The dot goes
@@ -105,7 +127,19 @@ From `06-demo-and-pitch.md`, with what has to be true on screen for each.
 | 3 Clean reps | 0:30 | Rep count climbing (reps 1–4) | Skeleton tracking, reps panel |
 | 4 Compensation | 0:30 | Eyes narrow, correction spoken + captioned (rep 5) | Compensation appears in panel |
 | 5 Fatigue | 0:20 | Tired eyes, offer to rest (reps 6–8) | Fatigue pill goes amber then red |
-| 6 Summary | 0:20 | Spoken summary | Summary file lands via Office Kit |
+| 6 Summary | 0:20 | Spoken summary | **Office Kit transfer is not built** |
+
+**Beat 1 works from a cold idle screen.** The camera now starts at idle rather
+than at setup, so the laptop already shows a live skeleton while the phone is
+just a blinking face — which is the whole point of the beat. It used to be
+blank until someone tapped the screen.
+
+**Beat 6 needs both arms.** The affected-versus-unaffected line only appears if
+reps were recorded on each side. Tap **Other arm** during the session, let it
+recalibrate for two seconds, and do two or three reps with the other arm.
+Without that the summary is reps and quality only, and the comparison — the
+measurement `06-demo-and-pitch.md` calls the one a physio cares about — is
+silently absent.
 
 **Total ~2:20**, inside a 3–5 minute slot.
 
@@ -130,6 +164,10 @@ keep moving — freezing costs more than the fault does.
 | Phone can't reach laptop | — | Check both are on the same WiFi and the IP is current. Phone hotspot is the fallback. |
 | Compensation doesn't fire | "Let me exaggerate that." | Lean further. Thresholds are hand-tuned; say so, it is the honest answer. |
 | Fatigue doesn't fire in time | Move to the summary. | Do not stall waiting for it. It is Tier 2. |
+| No reps counting at all | — | Sit back so your **hips are in shot**. E1's angle is hip → shoulder → elbow; no hips, no angle. |
+| Left/right reported backwards | — | Mirror mode. Raise only your right arm to check. Inverts the affected-side analysis, so verify before demoing. |
+| Second Voice returns nothing | "That part needs a connection — the exercise session doesn't." | Proxy down, no key, or no internet. Falls back locally. Do not pretend it is offline. |
+| Viewer blank though relay is running | — | Something else grabbed 8787, or `adb reverse` is not set. |
 
 ### If the network blocks it
 

@@ -9,7 +9,7 @@ The published scoring is 75 percent jury panel, 25 percent HackTracker device da
 | 30% | End product quality: does it work, is it useful, would someone keep using it | Jury | Tier 1 features must be solid. A working simple build beats a broken complex one, which the organisers state explicitly. |
 | 20% | Novelty and impact | Jury | Compensation detection is the answer here, not rep counting. Lead with it. |
 | 15% | Creative phone use: camera, voice, on-device AI | Device data | Camera plus on-device pose plus TTS plus on-device summary. This is the whole architecture, so it scores itself. |
-| 15% | Technical depth: architecture, code quality, real hardware use | Jury | On-device NPU inference, the streaming architecture, real geometry rather than a wrapped API. |
+| 15% | Technical depth: architecture, code quality, real hardware use | Jury | On-device inference (CPU delegate — not NPU, see below), the streaming architecture, real geometry rather than a wrapped API. |
 | 10% | Office Kit usage | Device data | Summary file transfer, and screen mirroring during the demo. Read off device data, so actually use it, do not just mention it. |
 | 10% | Demo and presentation | Jury | The script below. |
 
@@ -41,7 +41,22 @@ Feedback that corrects compensation is proven to work. But the research doing it
 
 **3:00 to 3:45 - How it works, technically**
 
-On-device pose landmarks on the Snapdragon NPU. No cloud. Works in airplane mode, which matters because the target user often has poor connectivity. Compensation detection is real geometry off the landmark stream, normalised per-person from a calibration baseline, not a wrapped API call. The affected-versus-unaffected comparison is the measurement a physio actually cares about.
+On-device pose landmarks — Google's BlazePose, the full variant, bundled in the APK and run through MediaPipe Tasks. No cloud. The exercise session works in airplane mode, which matters because the target user often has poor connectivity. Compensation detection is real geometry off the landmark stream, normalised per-person from a calibration baseline, not a wrapped API call. The affected-versus-unaffected comparison is the measurement a physio actually cares about.
+
+> **Two corrections to the wording above, both verified against the build.**
+>
+> **Do not say NPU.** Inference runs on the **CPU** delegate — the bridge
+> hardcodes `Delegate.CPU`. "On-device" is completely true and carries the
+> whole argument; "NPU" is a claim a hardware-track judge will test. If asked:
+> *"CPU today. The delegate is one line, but we didn't want to claim a number
+> we hadn't measured on this device."*
+>
+> **Say "the exercise session works in airplane mode", not "everything does".**
+> Second Voice, the communication aid, calls OpenRouter through a laptop proxy.
+> It is gated out of the active session so the exercise loop really is offline,
+> but the unqualified claim is false while that feature is reachable.
+>
+> Spoken script with both corrections applied: `demo/PITCH.md`.
 
 **3:45 to 4:15 - What we would do next**
 

@@ -8,7 +8,12 @@ import type {
 } from '../types/contracts';
 import * as machine from './state/sessionMachine';
 import { useVisionStream } from './vision/useVisionStream';
-import { COMPENSATION_LINES, FATIGUE_LINES, pickRepFeedback } from './feedback/feedbackTable';
+import {
+  COMPENSATION_LINES,
+  CONTROL_LINES,
+  FATIGUE_LINES,
+  pickRepFeedback,
+} from './feedback/feedbackTable';
 import { generateTemplateSummary } from './summary/generateSummary';
 import { parseVoiceCommand } from './voice/commandParser';
 import { FatigueDetector } from '../fatigue';
@@ -32,10 +37,48 @@ export function useSessionController() {
   const previousQualityRef = useRef<RepEvent['quality'] | null>(null);
 
   const isActive = session.phase === 'active';
-  // The camera runs from setup onward so the user can be told whether they are
-  // in shot before committing to a session, and so calibration can begin the
-  // moment the exercise is chosen.
-  const cameraNeeded = session.phase === 'setup' || session.phase === 'active' || session.phase === 'resting';
+
+  /**
+   * Which arm is being exercised right now, and therefore how its reps are
+   * labelled. Starts on the affected side, which is the one that matters.
+   *
+   * `session.affectedSide` is anatomy ('left' | 'right'); this is the clinical
+   * role. Both are needed, because the affected-versus-unaffected comparison
+   * in 04-clinical-logic.md is impossible if every rep carries the same label.
+   */
+  const [currentArm, setCurrentArm] = useState<RepEvent['side']>('affected');
+
+  /**
+   * Recent events, newest first, for the dev overlay only.
+   *
+   * Exists because compensation and fatigue are the two features that cannot
+   * be confirmed by looking at the phone: a correction that never fires and a
+   * correction that fires correctly look identical from the outside. Bounded,
+   * and never rendered in the patient-facing UI — 02-product-spec.md is
+   * explicit that debug output belongs behind a dev toggle.
+   */
+  const [eventLog, setEventLog] = useState<string[]>([]);
+  const logEvent = useCallback((line: string) => {
+    setEventLog((prev) => [line, ...prev].slice(0, 8));
+  }, []);
+  const workingSide: 'left' | 'right' | null =
+    session.affectedSide === null
+      ? null
+      : currentArm === 'affected'
+        ? session.affectedSide
+        : session.affectedSide === 'left'
+          ? 'right'
+          : 'left';
+
+  // The camera runs from idle onward, not from setup.
+  //
+  // 06-demo-and-pitch.md beat 1 is the demonstrator pointing at the laptop
+  // while the phone sits idle: "Notice what's not on the screen: the camera.
+  // The camera feed goes here." If the camera only started at setup, that
+  // laptop would be blank for the single most important beat in the pitch.
+  // The view is invisible either way, so there is nothing to lose by starting
+  // it early — and VisionCamera never unmounts once started.
+  const cameraNeeded = session.phase !== 'ended';
 
   // --- laptop stream ------------------------------------------------------
   // Created once and kept for the whole app lifetime. 03-architecture.md:
@@ -61,13 +104,18 @@ export function useSessionController() {
     fatigueRef.current = new FatigueDetector({
       workingSide: session.affectedSide ?? 'left',
       exercise: session.exercise === 'E3' ? 'E3' : 'E1',
+      // Only the affected arm's reps feed fatigue. Pooling both would compare
+      // a fresh arm against a tired one and read as recovery, and the affected
+      // side is the one whose tiring actually matters clinically.
+      sideFilter: 'affected',
     });
   }, [session.exercise, session.affectedSide, session.phase === 'idle']);
 
   const { handlePoseFrame, status } = useVisionStream(
     isActive,
     session.exercise,
-    session.affectedSide,
+    workingSide,
+    currentArm,
     {
       onFrame: (frame: PoseFrame) => {
         fatigueRef.current?.onPoseFrame(frame);
@@ -76,6 +124,12 @@ export function useSessionController() {
 
       onRep: (rep: RepEvent) => {
         const signal = fatigueRef.current?.onRepEvent(rep) ?? null;
+
+        logEvent(
+          `rep ${rep.repNumber} ${rep.side.slice(0, 3)} ` +
+            `${rep.peakAngle.toFixed(0)}deg ${Math.round(rep.durationMs)}ms ${rep.quality}`
+        );
+        if (signal) logEvent(`FATIGUE ${signal.level} (${signal.reason})`);
 
         setSession((s) => {
           let next = machine.addRep(s, rep);
@@ -99,6 +153,7 @@ export function useSessionController() {
       },
 
       onCompensation: (event: CompensationEvent) => {
+        logEvent(`COMP ${event.type} ${event.severity} ${Math.round(event.sustainedMs)}ms`);
         setSession((s) => {
           let next = machine.applyCompensation(s, event);
           next = machine.speak(next, COMPENSATION_LINES[event.type]);
@@ -178,15 +233,49 @@ export function useSessionController() {
   }, [isActive]);
 
   const startSetup = useCallback(() => {
-    setSession((s) => ({ ...s, phase: 'setup', faceState: 'attentive' }));
+    // Duo asks the question out loud as well as on screen. 02-product-spec.md
+    // step 2: "Duo asks what they are working on today, out loud and in
+    // on-screen text" — the text was on SetupScreen but nothing ever spoke it.
+    setSession((s) =>
+      machine.acknowledge({ ...s, phase: 'setup', lastSpoken: CONTROL_LINES.wake })
+    );
   }, []);
 
   const chooseExercise = useCallback((exercise: ExerciseId, affectedSide: 'left' | 'right') => {
+    setCurrentArm('affected');
     setSession((s) => machine.beginActive(machine.startSetup(s, exercise, affectedSide)));
   }, []);
 
-  const pauseSession = useCallback(() => setSession((s) => machine.pause(s)), []);
-  const resumeSession = useCallback(() => setSession((s) => machine.resume(s)), []);
+  /**
+   * Switch to the other arm mid-session, so the summary can compare the two.
+   *
+   * Without this the affected-versus-unaffected line in 04-clinical-logic.md
+   * and beat 6 of the demo can never appear: every rep would carry the same
+   * label, and the symmetry calculation needs both populated.
+   *
+   * Changing the side re-runs calibration and resets the rep counter, which is
+   * correct — the person will have shifted in the chair, and the rep state
+   * machine could be holding a half-finished rep on the other arm.
+   */
+  const switchArm = useCallback(() => {
+    setCurrentArm((arm) => (arm === 'affected' ? 'unaffected' : 'affected'));
+    setSession((s) =>
+      machine.acknowledge(machine.speak(s, 'Now the other arm. Sit still for a moment.'))
+    );
+  }, []);
+
+  // Touch is the control method that must never fail (02-product-spec.md), so
+  // it is what makes the acknowledging blink reachable. Previously that face
+  // state could only be triggered from voice commands, which are not wired up,
+  // so the fifth state never appeared at all.
+  const pauseSession = useCallback(
+    () => setSession((s) => machine.acknowledge(machine.speak(machine.pause(s), CONTROL_LINES.paused))),
+    []
+  );
+  const resumeSession = useCallback(
+    () => setSession((s) => machine.acknowledge(machine.speak(machine.resume(s), CONTROL_LINES.resumed))),
+    []
+  );
   const endSession = useCallback(() => {
     setSession((s) => {
       const ended = machine.endSession(s);
@@ -197,6 +286,7 @@ export function useSessionController() {
   const restartSession = useCallback(() => {
     previousQualityRef.current = null;
     publisher.resetSession();
+    setCurrentArm('affected');
     setSession(machine.restart());
   }, [publisher]);
 
@@ -240,14 +330,19 @@ export function useSessionController() {
     session,
     framed: status.framed,
     calibrating: status.calibrating,
+    ready: status.ready,
+    currentArm,
     cameraNeeded,
     handlePoseFrame,
     startSetup,
     chooseExercise,
+    switchArm,
     pauseSession,
     resumeSession,
     endSession,
     restartSession,
     handleHeardSpeech,
+    eventLog,
+    fatigueDebug: () => fatigueRef.current?.debug ?? null,
   };
 }

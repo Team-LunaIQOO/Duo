@@ -1,5 +1,22 @@
 # 03 - Architecture
 
+## Implementation status (as built)
+
+This document is the design. Five things ended up different once the modules
+were integrated on the loaner device. They are recorded here so nobody pitches
+the plan instead of the build.
+
+| Designed | As built | Why |
+|---|---|---|
+| Pose model on the **NPU** | **CPU delegate** | The ThinkSys bridge hardcodes `Delegate.CPU` and exposes no way to change it from JS. Say "on-device", never "NPU". See `demo/PITCH.md`. |
+| Phone runs a **WebSocket server** | Phone is a **client**; a relay runs on the laptop | No usable WS server library exists for React Native. Full reasoning in `mobile/src/streaming/ARCHITECTURE-NOTE.md`. Message shapes and rates are unchanged. |
+| `FrameMessage` (camera JPEGs to laptop) | **Not implemented** | The bridge exposes `onLandmark` only — no frame or pixel callback. The viewer shows the skeleton, which this document already treats as the primary signal. |
+| Everything offline | Exercise loop offline; **Second Voice needs the internet** | The communication aid calls OpenRouter through a laptop proxy. Gated to `phase !== 'active'`, so the exercise loop is unaffected. See `second-voice-proxy/README.md`. |
+| `confidence` = detection confidence | Fraction of all 33 landmarks visible | Person A's `toPoseFrame`. Too blunt for seated upper-body work, so framing is re-scoped per exercise in `src/app/vision/useVisionStream.ts`. |
+
+Build and run instructions live in `RUNNING.md`. **Expo Go no longer works** —
+pose detection is a native module.
+
 ## Rules that constrain every decision here
 
 1. Pose detection, movement analysis, and feedback selection all run on the phone. No network calls in the session loop.
@@ -13,7 +30,7 @@ PHONE (all real-time work happens here)
 ┌──────────────────────────────────────────────┐
 │ Front camera                                 │
 │   ↓                                          │
-│ Pose Landmarker (on-device, NPU)             │
+│ Pose Landmarker (on-device, CPU delegate)    │
 │   ↓                                          │
 │ Landmark stream (33 points, ~20-30 fps)      │
 │   ↓                                          │
@@ -148,7 +165,7 @@ Sending full-rate video would saturate the connection and add latency. Sending l
 | Layer | Choice | Notes |
 |---|---|---|
 | App shell | React Native / Expo | Team already knows it. No ramp-up time available. |
-| Pose detection | MediaPipe Pose Landmarker (33 landmarks, BlazePose) | Runs on-device with GPU/NPU delegate. Several RN bridges exist, see below. |
+| Pose detection | MediaPipe Pose Landmarker (33 landmarks, BlazePose) | **As built:** `@thinksys/react-native-mediapipe`, `pose_landmarker_full.task` bundled in the APK, LIVE_STREAM mode, **CPU delegate** (the bridge hardcodes it). On-device, no network. |
 | Camera frames | react-native-vision-camera with frame processor | The standard route for feeding frames to a native vision module. |
 | Text to speech | Platform TTS (expo-speech or native Android TTS) | Offline capable, zero setup, good enough. |
 | Speech to text | Platform speech recognition, on-device mode | Only runs after wake word fires. Never continuous. |
