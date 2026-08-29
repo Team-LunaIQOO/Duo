@@ -80,8 +80,35 @@ const COMMAND_HINTS = [
  */
 const ARMED_WINDOW_MS = 8_000;
 
-/** Delay before restarting a continuous session that ended on its own. */
-const RESTART_DELAY_MS = 400;
+/**
+ * Delay before restarting a continuous session that ended on its own.
+ *
+ * Every millisecond here is a millisecond the microphone is shut. Measured on
+ * the device, Android was ending sessions after 0.6-3.3 seconds regardless of
+ * `continuous: true`, so this gap came round every couple of seconds and a
+ * wake phrase spoken into one was simply never heard. The app looked broken
+ * and every status row said it was fine, because it was: the microphone was
+ * open, just not at that instant.
+ *
+ * 120ms is about as low as is useful — below that the platform tends to
+ * refuse the start as too soon after the last one.
+ */
+const RESTART_DELAY_MS = 120;
+
+/**
+ * How long the recogniser tolerates silence before deciding the utterance is
+ * over and ending the session.
+ *
+ * Android's defaults are tuned for dictation, where a pause means the sentence
+ * finished. Here silence is the normal state — the app waits, quietly, for
+ * somebody to say its name — so the defaults end the session constantly. These
+ * push it out to the platform maximum that still behaves.
+ */
+const ANDROID_SILENCE_OPTIONS = {
+  EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 10_000,
+  EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 10_000,
+  EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 20_000,
+} as const;
 
 /**
  * Consecutive start failures before wake listening gives up for good. Without
@@ -151,6 +178,15 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
   const [lastHeard, setLastHeard] = useState<string | null>(null);
 
   const armedUntilRef = useRef(0);
+  /**
+   * When a bare wake was last acted on.
+   *
+   * Matching on partials means the same "hey duo" arrives twice — once as a
+   * partial and again in the final — and each would fire the wake. From idle
+   * that is two startSetup calls for one greeting. The window is short enough
+   * that genuinely saying the name twice still works.
+   */
+  const lastWakeAt = useRef(0);
   const errorCountRef = useRef(0);
   /**
    * Which kind of session is open, so the keep-alive effect below can tell its
@@ -210,11 +246,17 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
           sessionKindRef.current = continuous ? 'wake' : 'oneshot';
           ExpoSpeechRecognitionModule.start({
             lang: 'en-US',
-            interimResults: false,
+            // Interim results matter for a wake phrase. A final result only
+            // arrives once the recogniser decides the utterance is over, which
+            // is a second or more after the words were actually said; matching
+            // the phrase on a partial is the difference between Duo answering
+            // as you finish speaking and answering after an awkward pause.
+            interimResults: true,
             maxAlternatives: 5,
             continuous,
             requiresOnDeviceRecognition: usingOnDevice,
             contextualStrings: COMMAND_HINTS,
+            androidIntentOptions: ANDROID_SILENCE_OPTIONS,
           });
         } catch (error) {
           errorCountRef.current += 1;
@@ -263,11 +305,25 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
   });
 
   useSpeechRecognitionEvent('result', (event) => {
-    if (!event.isFinal) return;
-
     const transcripts = event.results.map((r) => r.transcript).filter(Boolean);
     if (transcripts.length === 0) return;
     setLastHeard(transcripts[0]);
+
+    /*
+     * Interim results are used for the wake phrase and ignored for everything
+     * else.
+     *
+     * The wake phrase wants to fire the instant the name is recognised, and
+     * "hey duo" is short enough to be stable in a partial. A command, by
+     * contrast, must never act on a partial: "stop" is a prefix of nothing
+     * useful, but a half-heard sentence is easily a different sentence, and
+     * acting on it would end a session the user was mid-way through.
+     *
+     * The guard below makes that concrete: a wake match on a partial arms and
+     * reacts, and anything else waits for the final.
+     */
+    const isFinal = event.isFinal;
+    const now = Date.now();
 
     // 1. The wake phrase, checked across every alternative. "duo" is a name,
     //    so it is exactly the kind of token a general recogniser demotes.
@@ -285,6 +341,14 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
         return;
       }
 
+      // A partial can carry the name but a truncated instruction, so the
+      // remainder is only acted on once the utterance is complete. The wake
+      // itself still lands immediately, which is the part the user feels.
+      if (!isFinal && wake.remainder) {
+        if (!armed) arm();
+        return;
+      }
+
       const command = wake.remainder ? parseVoiceCommand(wake.remainder) : null;
       if (command) {
         // "hey duo start" in one breath. The command runs immediately and the
@@ -294,7 +358,10 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
       } else {
         // A bare "hey duo". Duo reacts and waits for the instruction.
         arm();
-        onWakeRef.current();
+        if (now - lastWakeAt.current > 1500) {
+          lastWakeAt.current = now;
+          onWakeRef.current();
+        }
       }
       return;
     }
@@ -303,6 +370,7 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
     //    by saying the phrase or tapping the button. Everything else said in
     //    the room is discarded unheard, which is the whole point of a wake
     //    phrase — the microphone being open is not permission to act.
+    if (!isFinal) return;
     if (Date.now() > armedUntilRef.current) return;
 
     // Alternatives again, best first, first one that parses wins. Single-word
