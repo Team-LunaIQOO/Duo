@@ -31,7 +31,8 @@ export function AppShell() {
 
   const controller = useSessionController();
   const { session } = controller;
-  const proxyEndpoint = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL;
+  // Expo only inlines EXPO_PUBLIC variables referenced with static dot notation.
+  const proxyEndpoint = process.env.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL;
 
   // `speaking` closes the microphone for as long as Duo is talking. Without
   // it the wake session hears Duo say "Paused. Tap or say start when ready",
