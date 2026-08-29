@@ -410,6 +410,29 @@ export function useSessionController() {
     setSession(machine.restart());
   }, [publisher]);
 
+  /**
+   * A bare "hey duo", with no command attached.
+   *
+   * 02-product-spec.md, step 2 of the session: "The user says the wake phrase,
+   * or taps the screen. The eyes react (widen, look toward the user). Duo asks
+   * what they are working on today." So from idle the wake phrase does exactly
+   * what tapping the screen does — it is the same doorway, and startSetup is
+   * the same function the tap calls.
+   *
+   * Anywhere else it is an acknowledgement: the eyes give their one quick wide
+   * blink, and the armed window in useSpeechCommands waits for the
+   * instruction. Nothing else changes, because the user has not asked for
+   * anything yet.
+   */
+  const handleWake = useCallback(() => {
+    logEvent('VOICE wake');
+    if (session.phase === 'idle') {
+      startSetup();
+      return;
+    }
+    setSession((s) => machine.acknowledge(s));
+  }, [session.phase, startSetup, logEvent]);
+
   // Every voice command routes through the same actions the touch buttons
   // use, so the two control methods can never behave differently (see
   // 02-product-spec.md "Control methods": touch must always work as the
@@ -473,6 +496,7 @@ export function useSessionController() {
     endSession,
     restartSession,
     handleHeardSpeech,
+    handleWake,
     eventLog,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
     gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,

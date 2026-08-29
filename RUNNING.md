@@ -107,24 +107,57 @@ entirely on the phone. Without the proxy the panel degrades to a local fallback
 provider rather than breaking. Be precise about this when pitching: the
 exercise session works in airplane mode, the whole product does not.
 
-## Voice commands
+## Voice: "hey duo", and the commands
 
-**Tap the microphone button, then say one word.** start, pause, stop, next,
-repeat that, how many. Every one routes to the same action the matching touch
-button calls, so the two can never behave differently.
+**Say "hey duo".** Duo reacts and waits about eight seconds for the
+instruction. Or say it in one breath — **"hey duo start"**, "hey duo stop",
+"hey duo how many" — and it runs immediately.
 
-The button is on the idle screen and in the active session's left column. It
-carries its own listening state, which is the "subtle listening indicator"
-`02-product-spec.md` asks for, and it hides itself entirely if the device
-reports no usable recogniser — a dead microphone button is worse than none,
-because the user cannot tell whether they were heard.
+Commands: start, pause, stop, next, repeat that, how many. Every one routes to
+the same action the matching touch button calls, so the two can never behave
+differently.
 
-**There is no wake phrase, deliberately.** `03-architecture.md`'s licensing
-warning stands: Porcupine's free tier will not ship a custom "Hey Duo" on ARM
-Android, and the free pre-trained keywords would mean renaming the assistant.
-That warning names tap-to-talk as the safe default, and `02-product-spec.md`
-requires a tap-to-talk button on screen anyway. Saying "hey duo" does nothing,
-and is not meant to.
+**The microphone button still works and is still the fallback.** With the wake
+phrase running the microphone is already open, so tapping the button arms the
+next thing you say rather than opening it — which is why the label says
+`Say "hey duo", or tap` rather than pretending the microphone is off. It hides
+entirely if the device reports no usable recogniser; a dead button is worse
+than no button.
+
+### How the wake phrase works, and why it is not Porcupine
+
+`03-architecture.md`'s licensing warning is about Porcupine specifically, and
+it still stands — its free tier will not ship a custom "Hey Duo" on ARM
+Android. **This does not use a wake-word engine at all.** The speech recogniser
+that already serves voice commands is left running continuously, and
+`src/app/voice/wakePhrase.ts` matches the phrase in the transcript. One model,
+no new dependency, no licence.
+
+The cost is that a general recogniser hears a *name* poorly, so the matching
+has to tolerate "hey dua", "hey doo", "hey dio". Tolerance is also what makes a
+wake phrase a nuisance if done carelessly, so the matcher is deliberately
+strict about one case: "do" is a single edit from "duo" and an extremely common
+word, so it only counts as the wake token when nothing follows it or when a
+command does. **"Hey, do you want to take a break"** — a sentence a carer would
+actually say in the room — does not wake the app. That is asserted in the
+self-test, along with every line Duo itself speaks.
+
+### The rule that makes continuous listening acceptable
+
+**The microphone is only left open when recognition runs on-device.** If the
+phone cannot do on-device recognition, the wake phrase disables itself and
+voice falls back to tap-to-talk. Continuously streaming a living room to a
+cloud recogniser is not a trade this product gets to make — `README` rule #1
+puts the session loop on the device, and these users are doing rehab at home,
+often with someone else in the room. Check the dev overlay's `voice` row: if it
+says `CLOUD`, the wake phrase will not be running, and that is deliberate.
+
+Recognition is also **suspended while Duo is speaking**. Not a nicety: one of
+its own lines is "Paused. Tap or say start when ready", which contains the word
+*start*. Left listening, Duo would pause the session, say that, hear itself,
+and resume.
+
+To switch the wake phrase off, open the dev overlay and tap the `wake` row.
 
 Grant the microphone without the dialog:
 
@@ -182,6 +215,7 @@ npx tsc src/gesture/selfTest.ts --ignoreConfig --ignoreDeprecations 6.0 \
   --outDir .selftest --module commonjs --target es2020 \
   --moduleResolution node --strict --skipLibCheck
 node .selftest/gesture/selfTest.js
+node .selftest/app/voice/selfTest.js
 ```
 
 47 checks, most of them asserting silence: clean reps to 95 and 150 degrees,
@@ -293,13 +327,14 @@ cd mobile
 npx tsc --noEmit                  # whole tree, all three modules
 
 # logic self-tests (no device, no network)
-npx tsc src/fatigue/selfTest.ts src/streaming/selfTest.ts src/gesture/selfTest.ts \
+npx tsc src/fatigue/selfTest.ts src/streaming/selfTest.ts src/gesture/selfTest.ts   src/app/voice/selfTest.ts \
   --ignoreConfig --ignoreDeprecations 6.0 --outDir .selftest \
   --module commonjs --target es2020 --moduleResolution node \
   --strict --skipLibCheck
 node .selftest/fatigue/selfTest.js
 node .selftest/streaming/selfTest.js
 node .selftest/gesture/selfTest.js
+node .selftest/app/voice/selfTest.js
 ```
 
 ## Known gaps
@@ -307,9 +342,12 @@ node .selftest/gesture/selfTest.js
 Three things are not done, and all are written up where they live rather than
 hidden:
 
-- **No wake phrase.** Voice commands work, but only on tap-to-talk. "Hey Duo"
-  does not exist and is not planned — see "Voice commands" above, it is a
-  licensing constraint rather than an oversight.
+- **The wake phrase costs battery.** It holds a continuous on-device
+  recognition session for as long as the app is open. That is the honest
+  trade for not having a dedicated wake-word engine, which would be a tenth of
+  the power and cannot be licensed here. It has not been measured over a long
+  session. If a demo battery looks marginal, turn the wake phrase off in the
+  dev overlay and use the button.
 
 - **Mirror mode is unvalidated.** `MIRROR_MODE` in
   `src/app/vision/VisionCamera.tsx` defaults to `'none'`. Per
@@ -336,6 +374,7 @@ hidden:
 | Holding a hand up does not pause | Get the hand above shoulder height, elbow bent, and hold it still for a second. The overlay names the test that is failing. |
 | No microphone button | The device reports no usable recogniser. Touch and the hand gesture still reach everything. |
 | Microphone button does nothing | Permission. `adb shell pm grant com.duo.mobile android.permission.RECORD_AUDIO`, or read the error code in the overlay's `voice` row. |
-| Saying "hey duo" does nothing | There is no wake phrase. Tap the microphone first. |
+| Saying "hey duo" does nothing | Check the overlay's `wake` row. `paused` means Duo is speaking. `OFF` means it was disabled, or the device has no on-device recognition, in which case the phrase is unavailable by design. |
+| It wakes when nobody said the phrase | The overlay prints the transcript it heard. Add the mis-hearing to the self-test in `src/app/voice/selfTest.ts` before touching the matcher, so the fix is pinned. |
 | Heard, but the wrong thing happened | The overlay logs `VOICE "<transcript>" -> <command>`. `commandParser.ts` matches substrings, so "stop" inside a longer sentence still counts. |
 | Second Voice returns nothing | Proxy not running, no `OPENROUTER_API_KEY`, or no internet. It falls back locally rather than erroring. |

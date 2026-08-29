@@ -142,9 +142,16 @@ export function DevOverlay({
       */}
       <Text style={styles.row}>
         voice {voice.available ? (voice.usingOnDevice ? 'on-device' : 'CLOUD') : 'unavailable'}
-        {voice.listening ? ' · listening' : ''}
+        {voice.listening ? ' · mic open' : ''}
+        {voice.armed ? ' · ARMED' : ''}
         {voice.lastError ? ` · err ${voice.lastError}` : ''}
       </Text>
+      <Pressable onPress={() => voice.setWakeEnabled(!voice.wakeEnabled)} hitSlop={6}>
+        <Text style={styles.row}>
+          wake {voice.wakeActive ? 'listening' : voice.wakeEnabled ? 'paused' : 'OFF'} · tap to
+          {voice.wakeEnabled ? ' disable' : ' enable'}
+        </Text>
+      </Pressable>
       {voice.lastHeard && <Text style={styles.rowDim}>heard "{voice.lastHeard}"</Text>}
 
       <Text style={styles.rowDim}>

@@ -1,35 +1,42 @@
 /**
- * Tap-to-talk speech recognition, wired to the existing command parser.
+ * Speech control: a "hey duo" wake phrase, with tap-to-talk still there as the
+ * fallback that cannot fail.
  *
  * 02-product-spec.md lists voice first among the control methods, "because it
- * works regardless of which hand is affected". Until now none of it was
- * connected: commandParser.ts parsed the six commands, handleHeardSpeech
- * routed each to the same action the touch buttons call, and nothing ever
- * called handleHeardSpeech, because the app had no recogniser at all
- * (expo-speech only speaks). This hook is that missing half and nothing more —
- * it produces a transcript and hands it over.
+ * works regardless of which hand is affected", and its session walkthrough
+ * opens with "The user says the wake phrase, or taps the screen". Both halves
+ * are here.
  *
- * ## Tap to talk, not a wake phrase
+ * ## No wake-word engine, and why that is fine
  *
- * There is deliberately no "Hey Duo". 03-architecture.md's licensing warning
- * still stands: Porcupine's free tier will not ship a custom wake word on ARM
- * Android, and the free pre-trained alternatives would mean renaming the
- * assistant. That same warning names tap-to-talk as the safe default, and
- * 02-product-spec.md already requires a tap-to-talk button to be visible at all
- * times regardless. So the microphone opens on a tap and closes itself.
+ * 03-architecture.md's licensing warning is about Porcupine: its free tier
+ * will not ship a custom "Hey Duo" model on ARM Android. That is still true,
+ * and nothing here goes near it. The recogniser that already serves voice
+ * commands is left running continuously instead, and wakePhrase.ts matches the
+ * phrase in the transcript. One model, no new dependency, no licence.
  *
- * It is also the honest choice for the battery and the privacy claim: nothing
- * listens until the user asks it to.
+ * ## The rule that makes continuous listening acceptable
  *
- * ## On-device where the device allows it
+ * **The microphone is only ever left open when recognition runs on-device.**
+ * If the phone cannot do on-device recognition, the wake phrase is disabled
+ * and voice control falls back to tap-to-talk. Continuously streaming a
+ * living room to a cloud recogniser is not a trade this product gets to make:
+ * README rule #1 puts the session loop on the device, and 01-problem-and-users
+ * describes people doing rehab at home, often with someone else in the room.
+ * A wake phrase is not worth that, so it simply switches itself off instead.
  *
- * README rule #1 is that the session loop makes no network calls, and the pitch
- * says the exercise session works in airplane mode. Android's default recogniser
- * is a cloud service, so `requiresOnDeviceRecognition` is set whenever the
- * device reports support for it (Android 13+ with the offline model
- * downloaded). Where it is unsupported this falls back to the platform default
- * rather than failing — and `usingOnDevice` says which happened, so nobody has
- * to guess before making the claim on stage.
+ * That also keeps the pitch honest — with on-device recognition the audio
+ * never leaves the phone, so "the exercise session works in airplane mode"
+ * survives having a wake phrase.
+ *
+ * ## Duo must not hear itself
+ *
+ * Recognition is suspended while the app is speaking. This is not a nicety:
+ * one of Duo's own lines is "Paused. Tap or say start when ready", which
+ * contains the word start. Left listening, Duo would pause the session, say
+ * that sentence, hear itself, and resume — a loop that would look like the
+ * app ignoring the user. The voice self-test also checks that no spoken line
+ * contains the wake phrase, as a standing guard on future feedback lines.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -39,14 +46,17 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import { parseVoiceCommand } from './commandParser';
+import { matchWakePhrase } from './wakePhrase';
 
 /**
- * Words worth biasing the recogniser toward. These are the tokens
- * commandParser.ts matches on, so nudging the engine toward them costs nothing
- * and measurably helps with single-word utterances, which are the hardest case
- * for a general-purpose model.
+ * Words worth biasing the recogniser toward: the tokens commandParser.ts
+ * matches on, plus the wake phrase itself. Nudging a general model toward
+ * "duo" is the cheapest available improvement to wake reliability, since it is
+ * a name rather than a word the language model expects.
  */
 const COMMAND_HINTS = [
+  'hey duo',
+  'duo',
   'start',
   'begin',
   'pause',
@@ -61,40 +71,97 @@ const COMMAND_HINTS = [
   'how many',
 ];
 
+/**
+ * How long a bare "hey duo" keeps listening for the command that follows it.
+ * Long enough to think, short enough that a later unrelated sentence is not
+ * taken as an instruction.
+ */
+const ARMED_WINDOW_MS = 8_000;
+
+/** Delay before restarting a continuous session that ended on its own. */
+const RESTART_DELAY_MS = 400;
+
+/**
+ * Consecutive start failures before wake listening gives up for good. Without
+ * this, a device that refuses to start recognition would be asked forever.
+ */
+const MAX_CONSECUTIVE_ERRORS = 5;
+
 export type SpeechCommandsStatus = {
-  /** True while the microphone is open. */
+  /** True while the microphone is open, for either reason. */
   listening: boolean;
   /** False when the device has no usable recogniser — the button then hides. */
   available: boolean;
-  /** True when recognition is running without sending audio off the device. */
+  /** True when recognition runs without sending audio off the device. */
   usingOnDevice: boolean;
+  /** True when the wake phrase is being listened for right now. */
+  wakeActive: boolean;
+  /** True while a wake (or a tap) has armed the next utterance as a command. */
+  armed: boolean;
   /** Last error code from the recogniser, for the dev overlay. */
   lastError: string | null;
   /** Last transcript received, for the dev overlay. */
   lastHeard: string | null;
-  /** Open the microphone. Safe to call when already listening. */
+  /** Arm the next utterance as a command, opening the microphone if needed. */
   listen: () => void;
-  /** Close it early. It closes itself on a final result. */
+  /** Disarm early. */
   stopListening: () => void;
+  /** Whether the user has switched the wake phrase off. */
+  wakeEnabled: boolean;
+  setWakeEnabled: (enabled: boolean) => void;
 };
 
-export function useSpeechCommands(onHeard: (heard: string) => void): SpeechCommandsStatus {
-  // onHeard closes over session state and therefore changes identity on most
-  // renders. Held in a ref so the native event listeners below never capture a
-  // stale one — the same hazard the vision stream documents, for a different
-  // subscription.
+type Options = {
+  /** A command was heard. The transcript, for the caller to parse and route. */
+  onHeard: (heard: string) => void;
+  /** A bare "hey duo" with no command attached. */
+  onWake: () => void;
+  /**
+   * True while the app is speaking. Recognition is suspended for the duration,
+   * so Duo cannot hear its own voice.
+   */
+  muted: boolean;
+};
+
+export function useSpeechCommands({ onHeard, onWake, muted }: Options): SpeechCommandsStatus {
+  // Both callbacks close over session state and change identity on most
+  // renders. Held in refs so the native listeners never capture a stale one —
+  // the same hazard the vision stream documents, for a different subscription.
   const onHeardRef = useRef(onHeard);
   onHeardRef.current = onHeard;
+  const onWakeRef = useRef(onWake);
+  onWakeRef.current = onWake;
 
   const [listening, setListening] = useState(false);
   const [available, setAvailable] = useState(false);
   const [usingOnDevice, setUsingOnDevice] = useState(false);
+  const [wakeEnabled, setWakeEnabled] = useState(true);
+  const [armed, setArmed] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastHeard, setLastHeard] = useState<string | null>(null);
 
-  // Capability is asked once. Both calls are synchronous native reads, but
-  // they are wrapped because a missing native module must degrade to "no
-  // microphone button" rather than taking the whole app down with it — voice
+  const armedUntilRef = useRef(0);
+  const errorCountRef = useRef(0);
+  /**
+   * Which kind of session is open, so the keep-alive effect below can tell its
+   * own continuous session apart from a one-shot started by the button.
+   * Without it, on a device with no on-device recognition — where the wake
+   * phrase is off but the button still works — starting a one-shot flips
+   * `listening`, re-runs that effect, and it aborts the session it just
+   * started. The microphone would open and shut instantly, on exactly the
+   * devices that have no other way to use voice.
+   */
+  const sessionKindRef = useRef<'wake' | 'oneshot' | null>(null);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const permissionRef = useRef<boolean | null>(null);
+
+  // The wake phrase is only offered when recognition can run on-device. See
+  // the note at the top of this file: this is the condition, not a preference.
+  const wakeSupported = available && usingOnDevice;
+  const wakeActive = wakeSupported && wakeEnabled && !muted;
+
+  // Capability is read once. Wrapped because a missing native module must
+  // degrade to "no microphone button" rather than taking the app down — voice
   // is Tier 3 and touch is the method that must never fail.
   useEffect(() => {
     try {
@@ -106,84 +173,234 @@ export function useSpeechCommands(onHeard: (heard: string) => void): SpeechComma
     }
   }, []);
 
-  useSpeechRecognitionEvent('start', () => setListening(true));
-  useSpeechRecognitionEvent('end', () => setListening(false));
+  const disarm = useCallback(() => {
+    armedUntilRef.current = 0;
+    setArmed(false);
+  }, []);
+
+  const arm = useCallback(() => {
+    armedUntilRef.current = Date.now() + ARMED_WINDOW_MS;
+    setArmed(true);
+  }, []);
+
+  /** Opens a recognition session. Continuous when listening for the wake phrase. */
+  const startSession = useCallback(
+    (continuous: boolean) => {
+      void (async () => {
+        try {
+          if (permissionRef.current !== true) {
+            const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+            permissionRef.current = permission.granted;
+            if (!permission.granted) {
+              setLastError('not-allowed');
+              return;
+            }
+          }
+
+          sessionKindRef.current = continuous ? 'wake' : 'oneshot';
+          ExpoSpeechRecognitionModule.start({
+            lang: 'en-US',
+            interimResults: false,
+            maxAlternatives: 5,
+            continuous,
+            requiresOnDeviceRecognition: usingOnDevice,
+            contextualStrings: COMMAND_HINTS,
+          });
+        } catch (error) {
+          errorCountRef.current += 1;
+          sessionKindRef.current = null;
+          setListening(false);
+          setLastError(error instanceof Error ? error.message : 'start-failed');
+        }
+      })();
+    },
+    [usingOnDevice]
+  );
+
+  useSpeechRecognitionEvent('start', () => {
+    setListening(true);
+    errorCountRef.current = 0;
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    sessionKindRef.current = null;
+    setListening(false);
+  });
 
   useSpeechRecognitionEvent('error', (event) => {
+    sessionKindRef.current = null;
     setListening(false);
-    // 'no-speech' is the user tapping and then saying nothing. It is not a
-    // fault and must not surface as one.
-    setLastError(event.error === 'no-speech' ? null : event.error);
+
+    // Two of these are not faults, and counting them would be a slow-acting
+    // bug rather than a cosmetic one.
+    //
+    // 'no-speech' is a quiet room, which is the normal state of a continuous
+    // session — it fires constantly.
+    //
+    // 'aborted' is this hook's own doing: the session is aborted every single
+    // time Duo speaks, because the microphone has to close while it talks.
+    // Counted as failures, five spoken lines would exhaust the give-up
+    // threshold and switch the wake phrase off for the rest of the session,
+    // with nothing on screen to explain why. That is exactly the kind of
+    // feature that looks finished and quietly stops working.
+    if (event.error === 'no-speech' || event.error === 'aborted') {
+      setLastError(null);
+      return;
+    }
+
+    errorCountRef.current += 1;
+    setLastError(event.error);
   });
 
   useSpeechRecognitionEvent('result', (event) => {
     if (!event.isFinal) return;
 
-    // Every alternative is checked, best first, and the first one that yields a
-    // command is the one handed on — exactly one command per tap, never two.
-    //
-    // Commands here are one or two words, which is where a general recogniser's
-    // top pick is least reliable: "start" comes back as "star" or "art" often
-    // enough to matter. Looking one row further down a list the engine has
-    // already produced costs nothing. The parser is pure, so asking it here and
-    // again downstream is free and keeps it the single source of truth about
-    // what counts as a command.
     const transcripts = event.results.map((r) => r.transcript).filter(Boolean);
     if (transcripts.length === 0) return;
+    setLastHeard(transcripts[0]);
 
+    // 1. The wake phrase, checked across every alternative. "duo" is a name,
+    //    so it is exactly the kind of token a general recogniser demotes.
+    for (const transcript of transcripts) {
+      const wake = matchWakePhrase(transcript);
+      if (!wake.matched) continue;
+
+      const command = wake.remainder ? parseVoiceCommand(wake.remainder) : null;
+      if (command) {
+        // "hey duo start" in one breath. The command runs immediately and the
+        // armed window is not opened — the user already said what they wanted.
+        disarm();
+        onHeardRef.current(wake.remainder);
+      } else {
+        // A bare "hey duo". Duo reacts and waits for the instruction.
+        arm();
+        onWakeRef.current();
+      }
+      return;
+    }
+
+    // 2. No wake phrase. Only act if the user has already asked for attention,
+    //    by saying the phrase or tapping the button. Everything else said in
+    //    the room is discarded unheard, which is the whole point of a wake
+    //    phrase — the microphone being open is not permission to act.
+    if (Date.now() > armedUntilRef.current) return;
+
+    // Alternatives again, best first, first one that parses wins. Single-word
+    // commands are where a general model's top pick is least reliable: "start"
+    // comes back as "star" often enough to matter.
     const understood = transcripts.find((t) => parseVoiceCommand(t) !== null);
-    setLastHeard(understood ?? transcripts[0]);
+    disarm();
     onHeardRef.current(understood ?? transcripts[0]);
   });
 
-  const listen = useCallback(() => {
-    void (async () => {
-      try {
-        const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-        if (!permission.granted) {
-          setLastError('not-allowed');
-          return;
+  // --- the continuous wake session ----------------------------------------
+  //
+  // Kept running whenever it should be, and restarted when it ends. Android
+  // segments a continuous session and ends it on its own periodically, so
+  // "start it once" is not enough; this is the loop that keeps it up.
+  useEffect(() => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+
+    // Duo is speaking. Whatever is listening has to stop, wake session or not,
+    // or the app hears its own voice.
+    if (muted) {
+      if (sessionKindRef.current !== null) {
+        try {
+          ExpoSpeechRecognitionModule.abort();
+        } catch {
+          // Nothing running.
         }
-
-        // Duo may be mid-sentence. Left running, its own voice goes into the
-        // microphone and comes back as a transcript.
-        Speech.stop();
-
-        ExpoSpeechRecognitionModule.start({
-          lang: 'en-US',
-          interimResults: false,
-          maxAlternatives: 5,
-          // One command per tap. Continuous recognition would hold the
-          // microphone open for the whole session, which 03-architecture.md
-          // rules out ("Never continuous") and which the battery would notice.
-          continuous: false,
-          requiresOnDeviceRecognition: usingOnDevice,
-          contextualStrings: COMMAND_HINTS,
-        });
-      } catch (error) {
-        setListening(false);
-        setLastError(error instanceof Error ? error.message : 'start-failed');
       }
-    })();
-  }, [usingOnDevice]);
+      return;
+    }
+
+    if (!wakeActive) {
+      // The wake phrase is switched off or unsupported. Only a wake session is
+      // ours to close here — a one-shot from the button must be left alone.
+      if (sessionKindRef.current === 'wake') {
+        try {
+          ExpoSpeechRecognitionModule.abort();
+        } catch {
+          // Nothing running.
+        }
+      }
+      return;
+    }
+
+    if (errorCountRef.current >= MAX_CONSECUTIVE_ERRORS) return;
+
+    if (!listening) {
+      restartTimerRef.current = setTimeout(() => startSession(true), RESTART_DELAY_MS);
+    }
+
+    return () => {
+      if (restartTimerRef.current) {
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+      }
+    };
+  }, [wakeActive, muted, listening, startSession]);
+
+  // The armed window closes on its own, so a tap or a wake that is never
+  // followed by a command does not leave the app acting on the next thing it
+  // happens to hear.
+  useEffect(() => {
+    if (!armed) return;
+    const remaining = Math.max(0, armedUntilRef.current - Date.now());
+    const timer = setTimeout(disarm, remaining + 50);
+    return () => clearTimeout(timer);
+  }, [armed, disarm]);
+
+  /**
+   * The tap-to-talk button. It arms the next utterance rather than opening a
+   * second recognition session: with the wake session already running, a
+   * second one would be refused by the platform. Where the wake phrase is
+   * unavailable this opens a one-shot session instead, which is the
+   * pre-wake-phrase behaviour and the reason the button still works on a
+   * device that cannot do any of this.
+   */
+  const listen = useCallback(() => {
+    Speech.stop();
+    arm();
+    if (!wakeActive && !listening) startSession(false);
+  }, [arm, wakeActive, listening, startSession]);
 
   const stopListening = useCallback(() => {
+    disarm();
+    if (wakeActive) return; // leave the wake session running
     try {
       ExpoSpeechRecognitionModule.stop();
     } catch {
-      // Already stopped, or the module is missing. Either way there is nothing
-      // to recover and nothing worth telling the user.
+      // Already stopped, or the module is missing.
     }
-  }, []);
+  }, [disarm, wakeActive]);
 
   // Never leave the microphone open behind us.
-  useEffect(() => () => {
-    try {
-      ExpoSpeechRecognitionModule.abort();
-    } catch {
-      // Nothing was running.
-    }
-  }, []);
+  useEffect(
+    () => () => {
+      try {
+        ExpoSpeechRecognitionModule.abort();
+      } catch {
+        // Nothing was running.
+      }
+    },
+    []
+  );
 
-  return { listening, available, usingOnDevice, lastError, lastHeard, listen, stopListening };
+  return {
+    listening,
+    available,
+    usingOnDevice,
+    wakeActive,
+    armed,
+    lastError,
+    lastHeard,
+    listen,
+    stopListening,
+    wakeEnabled: wakeSupported && wakeEnabled,
+    setWakeEnabled,
+  };
 }

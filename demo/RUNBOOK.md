@@ -141,14 +141,25 @@ Without that the summary is reps and quality only, and the comparison — the
 measurement `06-demo-and-pitch.md` calls the one a physio cares about — is
 silently absent.
 
-**Voice commands are live, on tap-to-talk.** Tap the microphone, then say
-start, pause, stop, next, repeat that or how many. There is **no wake phrase** —
-do not say "hey Duo" on stage, nothing will happen. Before the demo, open the
-dev overlay and check the `voice` row: if it says `CLOUD` rather than
-`on-device`, do not pair a voice command with the airplane-mode claim in the
-same breath, because on venue wifi it may simply not answer. The safest staging
-is to use touch for the scripted beats and show voice once, deliberately, as an
-accessibility point.
+**"Hey duo" is live.** Say "hey duo" and Duo reacts, then waits about eight
+seconds for the command; or say "hey duo start" in one breath and it runs
+straight away. The microphone button still works and now arms the next thing
+you say.
+
+Three things the demonstrator has to know:
+
+- **Check the overlay's `wake` row before you go on.** It must say `listening`.
+  If it says `OFF`, this phone has no on-device recognition and the wake phrase
+  disables itself by design — use the button and do not mention the phrase.
+- **The wake phrase holds the microphone open the whole time.** Watch the
+  battery, and if it looks marginal, turn it off in the overlay before you
+  start. Touch and the gesture lose nothing.
+- **Do not say "hey duo" while Duo is speaking.** The microphone is shut while
+  it talks, deliberately, so it cannot hear its own voice. Wait for the line to
+  finish.
+
+The safest staging is still touch for the scripted beats, and voice once,
+deliberately, as the accessibility point.
 
 **Gesture pause is live, and the demonstrator needs to know it.** Holding a
 hand up above shoulder height with a bent elbow, still, for about a second,

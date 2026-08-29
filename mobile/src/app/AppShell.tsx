@@ -33,7 +33,10 @@ export function AppShell() {
   const { session } = controller;
   const proxyEndpoint = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL;
 
-  useSpeakOnChange(session.lastSpoken);
+  // `speaking` closes the microphone for as long as Duo is talking. Without
+  // it the wake session hears Duo say "Paused. Tap or say start when ready",
+  // matches the word start, and resumes the session it just paused.
+  const speaking = useSpeakOnChange(session.lastSpoken);
 
   // Speech recognition lives here rather than inside useSessionController, so
   // the controller keeps no dependency on a native module and can still be
@@ -41,7 +44,11 @@ export function AppShell() {
   // produces goes through handleHeardSpeech, which routes to the same actions
   // the touch buttons call (02-product-spec.md: voice must never be the only
   // route to a function, and touch must never fail).
-  const voice = useSpeechCommands(controller.handleHeardSpeech);
+  const voice = useSpeechCommands({
+    onHeard: controller.handleHeardSpeech,
+    onWake: controller.handleWake,
+    muted: speaking,
+  });
 
   return (
     <View style={styles.container}>

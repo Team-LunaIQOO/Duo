@@ -102,12 +102,14 @@ answer is good:
 
 > Three ways in, and none of them is the only route to anything. Touch always
 > works. Holding a hand up pauses it — either hand, so it works whichever side
-> is affected. And spoken commands: tap to talk, then start, pause, stop.
+> is affected. And it answers to its name: "hey duo, start".
 >
-> No wake phrase, deliberately. The free tier of the wake-word engine won't
-> license a custom phrase on a phone, so rather than half-do it we put a
-> microphone button on the screen, which the accessibility requirement asked
-> for anyway.
+> There's no wake-word model in there. The licensable ones won't ship a custom
+> phrase on a phone, so we let the on-device recogniser that already handles
+> commands listen for the name too. One model instead of two — and because it's
+> on-device, the microphone never streams anywhere. If the phone can't do
+> on-device recognition, the wake phrase switches itself off rather than send
+> the room to a server.
 
 The gesture is worth a sentence because of *how* it is done: it is geometry
 over the same pose landmarks that do the compensation detection. No second

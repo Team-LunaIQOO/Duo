@@ -18,7 +18,11 @@ export function IdleScreen({ onTapToTalk, voice }: Props) {
     <Pressable style={styles.container} onPress={onTapToTalk}>
       <Face state="neutral" size={80} />
       <Text style={styles.hint}>
-        {voice.listening ? 'Listening…' : 'Tap anywhere to start'}
+        {voice.armed
+          ? 'Go ahead…'
+          : voice.wakeActive
+            ? 'Say "hey duo", or tap anywhere'
+            : 'Tap anywhere to start'}
       </Text>
       <MicButton voice={voice} />
     </Pressable>
