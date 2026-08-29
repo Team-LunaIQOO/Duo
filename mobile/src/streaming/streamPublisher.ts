@@ -139,13 +139,23 @@ export class StreamPublisher {
    * skeleton and has no use for either, and they would roughly double the
    * payload at 20 messages a second.
    *
-   * Frames the vision module cannot vouch for are not sent at all — a skeleton
-   * built from garbage landmarks looks worse on the laptop than a skeleton
-   * that briefly holds still, and 03-architecture.md is explicit that the
-   * laptop does zero analysis, so it cannot filter these itself.
+   * DISPLAY IS NOT GATED ON THE ANALYSIS VERDICT. An earlier version skipped
+   * frames whose `inFrame` was false, on the theory that a skeleton built from
+   * untrusted landmarks looks worse than one holding still. On the real device
+   * that was badly wrong: `inFrame` is derived from how many of all 33
+   * landmarks are visible, so a seated upper-body shot — legs permanently out
+   * of frame — flips it false the moment an arm rises. The laptop skeleton
+   * froze every few seconds and read as a dropped connection.
+   *
+   * Analysis still refuses untrusted frames, in the vision pipeline and in the
+   * fatigue detector, which is where 03-architecture.md's "do not compute
+   * angles off a frame where the relevant landmarks have low visibility"
+   * belongs. Showing the operator a live skeleton is a separate concern.
+   *
+   * The only frames rejected here are structurally unusable ones.
    */
   publishPoseFrame(frame: PoseFrame): boolean {
-    if (!frame.inFrame) return false;
+    if (!frame.landmarks || frame.landmarks.length === 0) return false;
 
     const t = this.now();
     if (t < this.landmarkDueAt) {

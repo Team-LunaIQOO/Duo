@@ -112,7 +112,7 @@ section('1. Landmark messages: rate and shape');
 
 // --- 2. Unusable frames are not streamed ----------------------------------
 
-section('2. Out-of-frame poses are not sent');
+section('2. Display is not gated on the analysis verdict');
 {
   const clock = makeClock();
   const transport = new MemoryTransport();
@@ -122,10 +122,25 @@ section('2. Out-of-frame poses are not sent');
   for (const e of generateMockSession({ repCount: 2, seed: 12 })) {
     if (e.kind !== 'frame') continue;
     clock.set(e.frame.timestamp);
-    publisher.publishPoseFrame({ ...e.frame, inFrame: false });
+    publisher.publishPoseFrame({ ...e.frame, inFrame: false, confidence: 0.2 });
   }
 
-  check('nothing sent while the user is out of frame', transport.sent.length === 0);
+  // The laptop must keep showing a live skeleton even while the analysis
+  // modules are refusing to trust the frame. `inFrame` counts all 33
+  // landmarks, so a seated upper-body shot reports false constantly — gating
+  // display on it froze the viewer every few seconds on the real device.
+  check(
+    'low-confidence, out-of-frame poses are still streamed for display',
+    transport.sent.length > 0,
+    `${transport.sent.length} sent`
+  );
+
+  const empty = new StreamPublisher(new MemoryTransport(), { clock: clock.now });
+  empty.start();
+  check(
+    'a structurally empty frame is still rejected',
+    !empty.publishPoseFrame({ timestamp: 0, landmarks: [], confidence: 1, inFrame: true })
+  );
 }
 
 // --- 3. JPEG frame rate, and the encode gate ------------------------------

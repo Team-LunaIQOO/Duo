@@ -139,17 +139,33 @@ export function useSessionController() {
   // 03-architecture.md failure behaviour: "Pose confidence drops -> Pause
   // counting, Duo says 'I can't see you clearly.' Do not count garbage reps."
   // The counting pause is enforced in the vision module; this is the voice half.
-  const wasFramedRef = useRef(true);
+  //
+  // Two things this must not do, both of which it did on the device:
+  //
+  // 1. Fire before any pose has been seen. `framed` starts false, so becoming
+  //    active immediately announced "I can't see you clearly" before a single
+  //    camera frame had been processed — hence `seenAnyPose`.
+  // 2. Leave the line on screen after tracking recovers. The caption renders
+  //    SessionState.lastSpoken and is sticky until something replaces it, so
+  //    the complaint sat there for the rest of the session while the laptop
+  //    happily showed a live skeleton. Recovery now speaks its own line.
+  const wasFramedRef = useRef<boolean | null>(null);
   useEffect(() => {
-    if (!isActive) {
-      wasFramedRef.current = true;
+    if (!isActive || !status.seenAnyPose) {
+      wasFramedRef.current = null;
       return;
     }
-    if (wasFramedRef.current && !status.framed) {
-      setSession((s) => machine.loseTracking(machine.speak(s, "I can't see you clearly.")));
-    }
+
+    const previous = wasFramedRef.current;
     wasFramedRef.current = status.framed;
-  }, [isActive, status.framed]);
+    if (previous === null || previous === status.framed) return;
+
+    if (!status.framed) {
+      setSession((s) => machine.loseTracking(machine.speak(s, "I can't see you clearly.")));
+    } else {
+      setSession((s) => machine.settleFaceState(machine.speak(s, 'There you are.')));
+    }
+  }, [isActive, status.framed, status.seenAnyPose]);
 
   // Prune compensations whose sustain window has passed, and re-settle the
   // face state, on a light tick — independent of the stream rate.

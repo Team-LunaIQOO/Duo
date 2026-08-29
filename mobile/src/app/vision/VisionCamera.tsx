@@ -14,7 +14,7 @@
  * A zero-sized view produces no landmarks at all.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useCameraPermissions } from 'expo-camera';
 
@@ -36,7 +36,18 @@ import type { MirrorMode } from '../../vision/landmarks';
 export const MIRROR_MODE: MirrorMode = 'none';
 
 type Props = {
-  /** Only mount the camera while it is actually needed. */
+  /**
+   * Gate on first mount only. Once the camera has started it is deliberately
+   * never unmounted for the rest of the app's life.
+   *
+   * The bridge creates its native fragment in a mount-time effect and
+   * subscribes to its landmark event with an empty dependency array. Tearing
+   * that down and rebuilding it on a phase change is how you get a camera that
+   * works for one session and then silently stops producing landmarks, and it
+   * risks stacking a second listener on remount so every frame is delivered
+   * twice. Starting it once and leaving it running avoids the whole class of
+   * problem, and costs nothing: the view is invisible either way.
+   */
   enabled: boolean;
   onPoseFrame: (frame: PoseFrame) => void;
   onPermissionDenied?: () => void;
@@ -44,6 +55,12 @@ type Props = {
 
 export function VisionCamera({ enabled, onPoseFrame, onPermissionDenied }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
+  // Latches on first enable and never clears — see the note on `enabled`.
+  const [started, setStarted] = useState(false);
+
+  useEffect(() => {
+    if (enabled) setStarted(true);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -58,7 +75,7 @@ export function VisionCamera({ enabled, onPoseFrame, onPermissionDenied }: Props
     }
   }, [permission, onPermissionDenied]);
 
-  if (!enabled || !permission?.granted) return null;
+  if (!started || !permission?.granted) return null;
 
   return (
     <View style={styles.hidden} pointerEvents="none" collapsable={false}>
