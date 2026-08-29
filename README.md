@@ -16,6 +16,10 @@ The phone is the whole product. No robot, no wearables, no external sensors. The
 | `06-demo-and-pitch.md` | The 3 to 5 minute demo script and how it maps to the judging rubric |
 | `07-risks-and-decisions.md` | Known risks, unresolved questions, decisions already made and why |
 
+To actually build and run it, see **`RUNNING.md`**. Note that Expo Go no longer
+works — pose detection is a native module, so the app needs a real native build
+on a real device.
+
 ## If you are an AI agent picking this up
 
 Start with `01` and `02` to understand what you are building and for whom. Then read `03` for the module you have been assigned and `04` if you are touching any movement analysis. Do not start writing code from `README` alone.
