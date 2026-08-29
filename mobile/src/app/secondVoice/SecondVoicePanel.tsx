@@ -73,8 +73,6 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
         <Pressable style={styles.primary} onPress={() => void (speech.listening ? speech.stop() : speech.start()).catch((error) => dispatch({ type: 'ERROR', message: error instanceof Error ? error.message : 'Speech recognition failed.' }))}><Text style={styles.primaryText}>{speech.listening ? 'Stop listening' : 'Start listening'}</Text></Pressable>
         {speech.partial && <Text style={styles.partial}>Heard: {speech.partial}</Text>}
         {speech.error && <Text style={styles.error}>{speech.error}</Text>}
-        <Text style={styles.help}>Typed fallback</Text>
-        <TextInput value={state.transcript} onChangeText={(text) => dispatch({ type: 'TRANSCRIPT', text })} onSubmitEditing={() => void submit()} placeholder="Type a transcript instead" placeholderTextColor="#777" style={styles.input} />
         <Pressable
           style={styles.modelButton}
           disabled={localGemma.downloadStatus === 'downloading' || localGemma.isCheckingStatus}
@@ -103,7 +101,6 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
         </View>}
         {localGemma.isLoaded && <Text style={styles.localReady}>Using on-device Gemma</Text>}
         <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSpeak }} style={styles.toggle} onPress={() => setAutoSpeak((value) => !value)}><Text style={styles.secondaryText}>{autoSpeak ? '☑ Auto-speak top suggestion' : '☐ Require Speak confirmation'}</Text></Pressable>
-        <Pressable style={styles.primary} onPress={() => void submit()}><Text style={styles.primaryText}>Find suggestions</Text></Pressable>
       </>}
       {state.phase === 'processing' && <Text style={styles.help}>Finding possible sentences…</Text>}
       {state.phase === 'candidates' && <>
