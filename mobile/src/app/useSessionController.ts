@@ -19,6 +19,7 @@ import {
 import { generateTemplateSummary } from './summary/generateSummary';
 import { parseVoiceCommand } from './voice/commandParser';
 import { FatigueDetector } from '../fatigue';
+import { GesturePauseDetector, type GestureDebug } from '../gesture';
 import { StreamPublisher, WebSocketClientTransport } from '../streaming';
 import { STREAM_URL } from './streamTarget';
 import { captureSnapshot, type SnapshotEvent } from '../vision/mediapipeAdapter';
@@ -189,6 +190,18 @@ export function useSessionController() {
     });
   }, [session.exercise, session.affectedSide, session.phase === 'idle']);
 
+  // --- gesture pause ------------------------------------------------------
+  // Created once and kept for the app's lifetime. It holds all of its state
+  // internally, so the frame handler that drives it stays free of closures —
+  // the constraint the ThinkSys bridge imposes (see useVisionStream).
+  //
+  // 02-product-spec.md, "Control methods": a raised hand, either hand, means
+  // pause. Additive only — it calls the same pauseSession() the Pause button
+  // calls, so gesture and touch cannot drift apart, and "do not make any
+  // single control method the only route to any function" holds trivially.
+  const gestureRef = useRef<GesturePauseDetector | null>(null);
+  if (gestureRef.current === null) gestureRef.current = new GesturePauseDetector();
+
   const { handlePoseFrame, status } = useVisionStream(
     isActive,
     session.exercise,
@@ -198,6 +211,19 @@ export function useSessionController() {
       onFrame: (frame: PoseFrame) => {
         fatigueRef.current?.onPoseFrame(frame);
         publisher.publishPoseFrame(frame);
+
+        // Every frame is fed to the detector, including outside an active
+        // session, so its release and cooldown state stays honest — but only
+        // an active session can be paused by one. A gesture during setup or
+        // after the summary is a no-op rather than a surprise.
+        const gesture = gestureRef.current?.update(frame) ?? null;
+        if (gesture) {
+          logEvent(
+            `GESTURE ${gesture.side} hand ${Math.round(gesture.heldMs)}ms` +
+              (session.phase === 'active' ? ' -> pause' : ` (ignored in ${session.phase})`)
+          );
+          if (session.phase === 'active') pauseSession();
+        }
       },
 
       onRep: (rep: RepEvent) => {
@@ -379,6 +405,7 @@ export function useSessionController() {
     sessionStartedAtRef.current = null;
     compensationHistoryRef.current = [];
     publisher.resetSession();
+    gestureRef.current?.reset();
     setCurrentArm('affected');
     setSession(machine.restart());
   }, [publisher]);
@@ -438,5 +465,6 @@ export function useSessionController() {
     handleHeardSpeech,
     eventLog,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
+    gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,
   };
 }

@@ -18,11 +18,12 @@
  * Deliberately awkward, so it cannot be opened by accident on stage.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { SessionState } from '../types/contracts';
 import type { FatigueDebug } from '../fatigue';
+import type { GestureDebug } from '../gesture';
 
 type Props = {
   session: SessionState;
@@ -32,6 +33,7 @@ type Props = {
   currentArm: 'affected' | 'unaffected';
   eventLog: string[];
   fatigueDebug: () => FatigueDebug | null;
+  gestureDebug: () => GestureDebug | null;
 };
 
 const TAPS_TO_OPEN = 3;
@@ -47,9 +49,25 @@ export function DevOverlay({
   currentArm,
   eventLog,
   fatigueDebug,
+  gestureDebug,
 }: Props) {
   const [taps, setTaps] = useState(0);
   const [open, setOpen] = useState(false);
+
+  // Re-render on a light tick while the panel is open.
+  //
+  // Nothing in this app re-renders per frame — the session state only changes
+  // when a rep or an event lands — so the two live rows below would otherwise
+  // sit frozen between reps. A gesture hold timer that only updates when
+  // something else happens cannot be used to check anything, and watching it
+  // move is the whole method for the false-positive check in RUNNING.md.
+  // Mounted only while open, so it costs nothing during a demo.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 250);
+    return () => clearInterval(timer);
+  }, [open]);
 
   if (!open) {
     return (
@@ -69,6 +87,7 @@ export function DevOverlay({
   }
 
   const fatigue = fatigueDebug();
+  const gesture = gestureDebug();
   const affected = session.reps.filter((r) => r.side === 'affected').length;
   const unaffected = session.reps.filter((r) => r.side === 'unaffected').length;
 
@@ -98,6 +117,19 @@ export function DevOverlay({
       {fatigue && fatigue.framesSkipped > 0 && (
         <Text style={styles.row}>frames skipped {fatigue.framesSkipped}</Text>
       )}
+
+      {/*
+        Gesture pause is invisible from the outside in exactly the way
+        compensation is: a detector that never fires and one that is about to
+        fire look identical. This row is how the false-positive check in
+        RUNNING.md is actually performed — do a set of reps and watch that the
+        reject reason keeps saying why each arm is not a raised hand, rather
+        than the hold timer creeping up.
+      */}
+      <Text style={styles.row}>
+        gesture {gesture?.posture ? `${gesture.posture} hold ${Math.round(gesture.heldMs)}ms` : (gesture?.reject ?? '—')}
+        {gesture?.latched ? ' · latched' : ''} · fired {gesture?.firedCount ?? 0}
+      </Text>
 
       <Text style={styles.rowDim}>
         {eventLog.length === 0 ? 'no events yet' : 'recent events'}

@@ -70,6 +70,7 @@ export function AppShell() {
         currentArm={controller.currentArm}
         eventLog={controller.eventLog}
         fatigueDebug={controller.fatigueDebug}
+        gestureDebug={controller.gestureDebug}
       />
 
       <SecondVoicePanel
