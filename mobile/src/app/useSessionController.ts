@@ -20,6 +20,7 @@ import { generateTemplateSummary } from './summary/generateSummary';
 import { parseVoiceCommand } from './voice/commandParser';
 import { FatigueDetector } from '../fatigue';
 import { GesturePauseDetector, type GestureDebug } from '../gesture';
+import { GazeController } from './face/gaze';
 import { StreamPublisher, WebSocketClientTransport } from '../streaming';
 import { STREAM_URL } from './streamTarget';
 import { captureSnapshot, type SnapshotEvent } from '../vision/mediapipeAdapter';
@@ -202,6 +203,20 @@ export function useSessionController() {
   const gestureRef = useRef<GesturePauseDetector | null>(null);
   if (gestureRef.current === null) gestureRef.current = new GesturePauseDetector();
 
+  // --- where the eyes look --------------------------------------------------
+  // 02-product-spec.md, the eye-state table: the attentive eyes track the
+  // user's head position from the pose landmarks. Created once and fed from
+  // the frame handler below. Nothing about it touches React state — see the
+  // note at the top of face/gaze.ts for why that matters at camera rate.
+  const gazeRef = useRef<GazeController | null>(null);
+  if (gazeRef.current === null) gazeRef.current = new GazeController();
+
+  useEffect(() => {
+    const gaze = gazeRef.current;
+    gaze?.start();
+    return () => gaze?.stop();
+  }, []);
+
   const { handlePoseFrame, status } = useVisionStream(
     isActive,
     session.exercise,
@@ -211,6 +226,10 @@ export function useSessionController() {
       onFrame: (frame: PoseFrame) => {
         fatigueRef.current?.onPoseFrame(frame);
         publisher.publishPoseFrame(frame);
+
+        // One nose read, throttled and smoothed inside the controller. No
+        // state is set, so this adds no renders at camera rate.
+        gazeRef.current?.update(frame.landmarks, Date.now());
 
         // Every frame is fed to the detector, including outside an active
         // session, so its release and cooldown state stays honest — but only
@@ -336,6 +355,22 @@ export function useSessionController() {
       setSession((s) => machine.settleFaceState(machine.speak(s, 'There you are.')));
     }
   }, [isActive, status.framed, status.seenAnyPose]);
+
+  /**
+   * The acknowledging blink is a one-shot, so it has to be taken back off.
+   *
+   * Its blink interval is "never" by design — the animation is the whole
+   * state. During a session the compensation prune tick happened to settle it
+   * within half a second, but nothing settled it in idle, setup or summary, so
+   * a wake phrase or a voice command outside a session would leave the eyes
+   * frozen open. That was invisible while those screens hardcoded their face
+   * state and would have appeared the moment they stopped.
+   */
+  useEffect(() => {
+    if (session.faceState !== 'acknowledging') return;
+    const timer = setTimeout(() => setSession((s) => machine.settleFaceState(s)), 700);
+    return () => clearTimeout(timer);
+  }, [session.faceState]);
 
   // Prune compensations whose sustain window has passed, and re-settle the
   // face state, on a light tick — independent of the stream rate.
@@ -498,6 +533,7 @@ export function useSessionController() {
     handleHeardSpeech,
     handleWake,
     eventLog,
+    gaze: gazeRef.current,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
     gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,
   };

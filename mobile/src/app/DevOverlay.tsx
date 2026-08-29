@@ -25,6 +25,7 @@ import type { SessionState } from '../types/contracts';
 import type { FatigueDebug } from '../fatigue';
 import type { GestureDebug } from '../gesture';
 import type { SpeechCommandsStatus } from './voice/useSpeechCommands';
+import type { GazeController } from './face/gaze';
 
 type Props = {
   session: SessionState;
@@ -36,6 +37,7 @@ type Props = {
   fatigueDebug: () => FatigueDebug | null;
   gestureDebug: () => GestureDebug | null;
   voice: SpeechCommandsStatus;
+  gaze?: GazeController;
 };
 
 const TAPS_TO_OPEN = 3;
@@ -53,6 +55,7 @@ export function DevOverlay({
   fatigueDebug,
   gestureDebug,
   voice,
+  gaze,
 }: Props) {
   const [taps, setTaps] = useState(0);
   const [open, setOpen] = useState(false);
@@ -153,6 +156,13 @@ export function DevOverlay({
         </Text>
       </Pressable>
       {voice.lastHeard && <Text style={styles.rowDim}>heard "{voice.lastHeard}"</Text>}
+
+      {gaze && (
+        <Text style={styles.row}>
+          gaze {gaze.tracking ? 'tracking' : 'centred'} · x {gaze.debugX.toFixed(2)} y{' '}
+          {gaze.debugY.toFixed(2)}
+        </Text>
+      )}
 
       <Text style={styles.rowDim}>
         {eventLog.length === 0 ? 'no events yet' : 'recent events'}

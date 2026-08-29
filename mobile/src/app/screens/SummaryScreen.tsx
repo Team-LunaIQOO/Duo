@@ -1,10 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Face } from '../face/Face';
 import type { RepEvent, SessionState } from '../../types/contracts';
+import type { GazeController } from '../face/gaze';
 
 type Props = {
   session: SessionState;
   onRestart: () => void;
+  gaze?: GazeController;
 };
 
 function meanPeakAngle(reps: RepEvent[]): number {
@@ -13,7 +15,7 @@ function meanPeakAngle(reps: RepEvent[]): number {
 }
 
 /** End of session — eyes full size, summary text read aloud + shown, required disclaimer. */
-export function SummaryScreen({ session, onRestart }: Props) {
+export function SummaryScreen({ session, onRestart, gaze }: Props) {
   const affected = session.reps.filter((r) => r.side === 'affected');
   const unaffected = session.reps.filter((r) => r.side === 'unaffected');
   const goodReps = session.reps.filter((r) => r.quality === 'good').length;
@@ -25,7 +27,7 @@ export function SummaryScreen({ session, onRestart }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.left}>
-        <Face state="neutral" size={72} />
+        <Face state={session.faceState} size={72} gaze={gaze} />
       </View>
 
       <View style={styles.right}>

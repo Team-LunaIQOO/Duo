@@ -269,6 +269,10 @@ deliberately and watch for a `COMP forward_lean` line, do a long set and watch
 the fatigue ratios move, and watch the `gesture` row while you rep. A detector
 that never fires and one that works look identical from the outside without it.
 
+The `gaze` row reads `gaze tracking · x -0.10 y 0.34` — where the eyes are
+looking, and whether a head is being followed at all. `centred` means no usable
+nose landmark for over a second, so the eyes have drifted back to the middle.
+
 The gesture row reads `gesture <reject reason> · fired N` when no hand is up,
 and `gesture left hold 420ms` while one is being held. During a set it should
 keep showing a reject reason — usually `arm_straight` or `elbow_high` — rather
@@ -354,6 +358,12 @@ hidden:
   `03-architecture.md`, if this is wrong then left and right landmarks swap,
   which inverts the affected-side analysis — the core feature, not a cosmetic
   bug. The test: raise **only your right arm** and confirm the app says right.
+
+  **There is now a one-second version of that test.** The eyes follow your
+  head, so lean to one side and watch them. If they follow you, the horizontal
+  axis is right. If they run away from you, something is mirrored — check the
+  arm test to find out which, then flip either `MIRROR_MODE` or `GAZE_X_SIGN`
+  in `src/app/face/gaze.ts`, not both.
 - **No camera video reaches the laptop.** The ThinkSys bridge exposes
   `onLandmark` and nothing else — no frame or pixel callback — so there is no
   way to get JPEGs out of it without native changes. The viewer shows the live

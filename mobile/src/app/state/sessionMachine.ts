@@ -67,9 +67,25 @@ export function acknowledge(state: SessionState): SessionState {
   return { ...state, faceState: 'acknowledging' };
 }
 
-/** Recomputes faceState from current signals. Call after any signal update. */
+/**
+ * Recomputes faceState from current signals. Call after any signal update.
+ *
+ * Now answers for every phase, not just 'active'. It used to return the state
+ * untouched outside a session, which was invisible while the idle, setup and
+ * summary screens hardcoded their own face state — but 'acknowledging' has a
+ * blink interval of "never" (it is a one-shot), so a wake or a command outside
+ * an active session left the eyes frozen open permanently. Nothing had ever
+ * rendered that, and wiring the real state into those screens is exactly what
+ * would have made it visible.
+ */
 export function settleFaceState(state: SessionState): SessionState {
-  if (state.phase !== 'active') return state;
+  if (state.phase === 'idle' || state.phase === 'ended') {
+    return { ...state, faceState: 'neutral' };
+  }
+  if (state.phase === 'setup') {
+    return { ...state, faceState: 'attentive' };
+  }
+  // Active or resting.
   if (state.activeCompensations.length > 0) return { ...state, faceState: 'concerned' };
   if (state.fatigue !== 'none') return { ...state, faceState: 'tired' };
   return { ...state, faceState: 'attentive' };

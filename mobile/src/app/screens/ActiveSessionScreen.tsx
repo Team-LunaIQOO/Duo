@@ -3,6 +3,7 @@ import { Face } from '../face/Face';
 import { MicButton } from '../voice/MicButton';
 import type { SpeechCommandsStatus } from '../voice/useSpeechCommands';
 import type { SessionState } from '../../types/contracts';
+import type { GazeController } from '../face/gaze';
 
 type Props = {
   session: SessionState;
@@ -15,6 +16,7 @@ type Props = {
   onSwitchArm: () => void;
   onEnd: () => void;
   voice: SpeechCommandsStatus;
+  gaze?: GazeController;
 };
 
 const QUALITY_COLOR: Record<string, string> = {
@@ -37,6 +39,7 @@ export function ActiveSessionScreen({
   onSwitchArm,
   onEnd,
   voice,
+  gaze,
 }: Props) {
   const lastRep = session.reps[session.reps.length - 1];
   const qualityColor = lastRep ? QUALITY_COLOR[lastRep.quality] : '#444';
@@ -59,7 +62,7 @@ export function ActiveSessionScreen({
       </View>
 
       <View style={styles.center}>
-        <Face state={session.faceState} size={48} />
+        <Face state={session.faceState} size={48} gaze={gaze} />
         <View style={styles.statsRow}>
           <Text style={styles.repCount}>{repsThisArm}</Text>
           <View style={[styles.qualityDot, { backgroundColor: qualityColor }]} />

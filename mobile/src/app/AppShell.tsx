@@ -59,11 +59,21 @@ export function AppShell() {
       />
 
       {session.phase === 'idle' && (
-        <IdleScreen onTapToTalk={controller.startSetup} voice={voice} />
+        <IdleScreen
+          onTapToTalk={controller.startSetup}
+          voice={voice}
+          faceState={session.faceState}
+          gaze={controller.gaze}
+        />
       )}
 
       {session.phase === 'setup' && (
-        <SetupScreen framed={controller.framed} onChooseExercise={controller.chooseExercise} />
+        <SetupScreen
+          framed={controller.framed}
+          onChooseExercise={controller.chooseExercise}
+          faceState={session.faceState}
+          gaze={controller.gaze}
+        />
       )}
 
       {(session.phase === 'active' || session.phase === 'resting') && (
@@ -76,10 +86,17 @@ export function AppShell() {
           onSwitchArm={controller.switchArm}
           onEnd={controller.endSession}
           voice={voice}
+          gaze={controller.gaze}
         />
       )}
 
-      {session.phase === 'ended' && <SummaryScreen session={session} onRestart={controller.restartSession} />}
+      {session.phase === 'ended' && (
+        <SummaryScreen
+          session={session}
+          onRestart={controller.restartSession}
+          gaze={controller.gaze}
+        />
+      )}
 
       <DevOverlay
         session={session}
@@ -91,6 +108,7 @@ export function AppShell() {
         fatigueDebug={controller.fatigueDebug}
         gestureDebug={controller.gestureDebug}
         voice={voice}
+        gaze={controller.gaze}
       />
 
       <SecondVoicePanel
