@@ -548,7 +548,12 @@ function draw() {
   // Landmarks and JPEG frames are both in the camera's normalised image space,
   // so they must be mapped through the same rect or the skeleton drifts off
   // the body.
-  const aspect = bgImage ? bgImage.width / bgImage.height : 3 / 4;
+  //
+  // The fallback matters whenever no camera frame is arriving: the phone locks
+  // itself to landscape (AppShell calls ScreenOrientation.lockAsync), so the
+  // camera image is landscape and a portrait fallback would squash the
+  // skeleton sideways.
+  const aspect = bgImage ? bgImage.width / bgImage.height : 4 / 3;
   const rect = contentRect(w, h, aspect);
 
   ctx.save();

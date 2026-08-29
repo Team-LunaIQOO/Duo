@@ -1,65 +1,158 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CompensationEvent, ExerciseId, RepEvent, SessionState } from '../types/contracts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  CompensationEvent,
+  ExerciseId,
+  PoseFrame,
+  RepEvent,
+  SessionState,
+} from '../types/contracts';
 import * as machine from './state/sessionMachine';
-import { useMockStream } from './mock/mockStream';
-import { computeMockFatigue } from './mock/mockFatigue';
+import { useVisionStream } from './vision/useVisionStream';
 import { COMPENSATION_LINES, FATIGUE_LINES, pickRepFeedback } from './feedback/feedbackTable';
 import { generateTemplateSummary } from './summary/generateSummary';
 import { parseVoiceCommand } from './voice/commandParser';
+import { FatigueDetector } from '../fatigue';
+import { StreamPublisher, WebSocketClientTransport } from '../streaming';
+import { STREAM_URL } from './streamTarget';
 
 /**
  * Single integration point for the pose/rep/compensation stream.
  *
- * Currently wired to useMockStream. Once Person A's real PoseFrame stream
- * is ready, replace that one hook call below with the real one — the
- * callback shapes (onFrame/onRep/onCompensation) match the frozen
- * contracts exactly, so nothing else in this file or in the screens needs
- * to change.
+ * Wired to the real pipeline: Person A's MediaPipe landmarks feed
+ * useVisionStream (calibration + rep counting + compensation detection),
+ * Person C's FatigueDetector consumes the resulting PoseFrames and RepEvents,
+ * and Person C's StreamPublisher mirrors everything to the laptop viewer.
+ *
+ * The mocks it replaced (mock/mockStream.ts, mock/mockFatigue.ts) are kept in
+ * the tree deliberately — they are the only way to exercise the app without
+ * the loaner device, and demo/RUNBOOK.md leans on that for rehearsal.
  */
 export function useSessionController() {
   const [session, setSession] = useState<SessionState>(machine.createInitialSessionState());
   const previousQualityRef = useRef<RepEvent['quality'] | null>(null);
 
-  // Stand-in for Person A's real inFrame/confidence signal during setup.
-  // Always true against the mock; a real stream should derive this from
-  // PoseFrame.inFrame + PoseFrame.confidence.
-  const [framed] = useState(true);
-
   const isActive = session.phase === 'active';
+  // The camera runs from setup onward so the user can be told whether they are
+  // in shot before committing to a session, and so calibration can begin the
+  // moment the exercise is chosen.
+  const cameraNeeded = session.phase === 'setup' || session.phase === 'active' || session.phase === 'resting';
 
-  useMockStream(isActive, {
-    onFrame: () => {
-      // Person A's real stream will also report inFrame/confidence here;
-      // the mock always reports in-frame so this is a no-op for now.
-    },
-    onRep: (rep: RepEvent) => {
-      setSession((s) => {
-        let next = machine.addRep(s, rep);
+  // --- laptop stream ------------------------------------------------------
+  // Created once and kept for the whole app lifetime. 03-architecture.md:
+  // "If the laptop disconnects, the session continues unaffected." The
+  // transport reconnects on its own and drops rather than queues, so nothing
+  // here can stall the session loop.
+  const publisher = useMemo(
+    () => new StreamPublisher(new WebSocketClientTransport({ url: STREAM_URL })),
+    []
+  );
 
-        const feedbackLine = pickRepFeedback(rep, previousQualityRef.current);
-        if (feedbackLine) next = machine.speak(next, feedbackLine);
-        previousQualityRef.current = rep.quality;
+  useEffect(() => {
+    publisher.start();
+    return () => publisher.stop();
+  }, [publisher]);
 
-        const fatigue = computeMockFatigue(next.reps);
-        next = machine.applyFatigue(next, fatigue);
-        if (fatigue.level !== 'none') {
-          next = machine.speak(next, FATIGUE_LINES[fatigue.level]);
-        }
+  // --- fatigue ------------------------------------------------------------
+  // Rebuilt per session and per side: the detector compares the last reps
+  // against the first reps of *this* session, so carrying it across sessions
+  // would compare a fresh arm against a tired one.
+  const fatigueRef = useRef<FatigueDetector | null>(null);
+  useEffect(() => {
+    fatigueRef.current = new FatigueDetector({
+      workingSide: session.affectedSide ?? 'left',
+      exercise: session.exercise === 'E3' ? 'E3' : 'E1',
+    });
+  }, [session.exercise, session.affectedSide, session.phase === 'idle']);
 
-        return machine.settleFaceState(next);
-      });
-    },
-    onCompensation: (event: CompensationEvent) => {
-      setSession((s) => {
-        let next = machine.applyCompensation(s, event);
-        next = machine.speak(next, COMPENSATION_LINES[event.type]);
-        return machine.settleFaceState(next);
-      });
-    },
+  const { handlePoseFrame, status } = useVisionStream(
+    isActive,
+    session.exercise,
+    session.affectedSide,
+    {
+      onFrame: (frame: PoseFrame) => {
+        fatigueRef.current?.onPoseFrame(frame);
+        publisher.publishPoseFrame(frame);
+      },
+
+      onRep: (rep: RepEvent) => {
+        const signal = fatigueRef.current?.onRepEvent(rep) ?? null;
+
+        setSession((s) => {
+          let next = machine.addRep(s, rep);
+
+          const feedbackLine = pickRepFeedback(rep, previousQualityRef.current);
+          if (feedbackLine) next = machine.speak(next, feedbackLine);
+          previousQualityRef.current = rep.quality;
+
+          // Only speak when the level actually changes. The detector already
+          // emits on change only; repeating "you're slowing down" every rep is
+          // exactly what 04-clinical-logic.md warns makes an assistant hostile.
+          if (signal) {
+            next = machine.applyFatigue(next, signal);
+            if (signal.level !== 'none') {
+              next = machine.speak(next, FATIGUE_LINES[signal.level]);
+            }
+          }
+
+          return machine.settleFaceState(next);
+        });
+      },
+
+      onCompensation: (event: CompensationEvent) => {
+        setSession((s) => {
+          let next = machine.applyCompensation(s, event);
+          next = machine.speak(next, COMPENSATION_LINES[event.type]);
+          return machine.settleFaceState(next);
+        });
+      },
+    }
+  );
+
+  // Mirror session state to the laptop panel.
+  //
+  // Re-published on a timer rather than only when the state changes. A
+  // state-change-only effect sends the opening values before the socket has
+  // finished connecting, they are dropped, and nothing re-sends them until the
+  // user happens to complete a rep — so a viewer that connects mid-session
+  // shows an empty panel. The publisher deduplicates, so this costs one
+  // comparison per second and sends nothing while the numbers are unchanged.
+  const statsRef = useRef({
+    reps: 0,
+    quality: '—',
+    compensations: [] as string[],
+    fatigue: 'none' as string,
   });
+  statsRef.current = {
+    reps: session.reps.length,
+    quality: session.reps[session.reps.length - 1]?.quality ?? '—',
+    compensations: session.activeCompensations.map((c) => c.type),
+    fatigue: session.fatigue,
+  };
+
+  useEffect(() => {
+    const publish = () => publisher.publishStats(statsRef.current);
+    publish();
+    const timer = setInterval(publish, 1000);
+    return () => clearInterval(timer);
+  }, [publisher]);
+
+  // 03-architecture.md failure behaviour: "Pose confidence drops -> Pause
+  // counting, Duo says 'I can't see you clearly.' Do not count garbage reps."
+  // The counting pause is enforced in the vision module; this is the voice half.
+  const wasFramedRef = useRef(true);
+  useEffect(() => {
+    if (!isActive) {
+      wasFramedRef.current = true;
+      return;
+    }
+    if (wasFramedRef.current && !status.framed) {
+      setSession((s) => machine.loseTracking(machine.speak(s, "I can't see you clearly.")));
+    }
+    wasFramedRef.current = status.framed;
+  }, [isActive, status.framed]);
 
   // Prune compensations whose sustain window has passed, and re-settle the
-  // face state, on a light tick — independent of the mock/real stream rate.
+  // face state, on a light tick — independent of the stream rate.
   useEffect(() => {
     if (!isActive) return;
     const timer = setInterval(() => {
@@ -87,8 +180,9 @@ export function useSessionController() {
   }, []);
   const restartSession = useCallback(() => {
     previousQualityRef.current = null;
+    publisher.resetSession();
     setSession(machine.restart());
-  }, []);
+  }, [publisher]);
 
   // Every voice command routes through the same actions the touch buttons
   // use, so the two control methods can never behave differently (see
@@ -128,7 +222,10 @@ export function useSessionController() {
 
   return {
     session,
-    framed,
+    framed: status.framed,
+    calibrating: status.calibrating,
+    cameraNeeded,
+    handlePoseFrame,
     startSetup,
     chooseExercise,
     pauseSession,

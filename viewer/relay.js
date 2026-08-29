@@ -173,6 +173,24 @@ const ROOT = __dirname;
 const viewers = new Set();
 let phoneCount = 0;
 
+/**
+ * Last stats and frame seen, replayed verbatim to each newly connected viewer.
+ *
+ * The phone deduplicates stats (it would otherwise repeat identical numbers
+ * many times a second), so it sends a given value exactly once. A viewer that
+ * opens after that — which is every viewer, since the laptop page is normally
+ * opened after the phone starts — would show an empty panel until the next
+ * rep changed something. During a demo that is the judges looking at a blank
+ * panel.
+ *
+ * This is a cache of display state, not analysis: the payloads are stored and
+ * forwarded byte for byte, never parsed for meaning. Landmarks are not cached
+ * because they arrive ~20 times a second and a stale skeleton is worse than no
+ * skeleton.
+ */
+let lastStats = null;
+let lastFrame = null;
+
 const counters = { landmarks: 0, frames: 0, stats: 0, other: 0 };
 
 const server = http.createServer((req, res) => {
@@ -228,6 +246,10 @@ server.on('upgrade', (req, socket) => {
 
   // Latency matters more than packet efficiency for a live skeleton.
   socket.setNoDelay(true);
+  // A phone whose process is killed (a reinstall, a crash, force-stop) never
+  // sends a FIN, so without probes the relay keeps counting a connection that
+  // is already gone and the status line lies about what is attached.
+  socket.setKeepAlive(true, 15000);
 
   const role = (req.url || '').startsWith('/phone') ? 'phone' : 'viewer';
 
@@ -252,6 +274,10 @@ server.on('upgrade', (req, socket) => {
 
   if (role === 'viewer') {
     viewers.add(send);
+    // Bring this viewer up to date immediately rather than leaving it blank
+    // until the phone next changes something.
+    if (lastFrame) send(lastFrame, OPCODE.TEXT);
+    if (lastStats) send(lastStats, OPCODE.TEXT);
   } else {
     phoneCount++;
   }
@@ -265,10 +291,17 @@ server.on('upgrade', (req, socket) => {
       // payload is relayed verbatim, so a malformed message costs nothing.
       try {
         const type = JSON.parse(text).type;
-        if (type === 'landmarks') counters.landmarks++;
-        else if (type === 'frame') counters.frames++;
-        else if (type === 'stats') counters.stats++;
-        else counters.other++;
+        if (type === 'landmarks') {
+          counters.landmarks++;
+        } else if (type === 'frame') {
+          counters.frames++;
+          lastFrame = text;
+        } else if (type === 'stats') {
+          counters.stats++;
+          lastStats = text;
+        } else {
+          counters.other++;
+        }
       } catch {
         counters.other++;
       }

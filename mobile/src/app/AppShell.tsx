@@ -7,13 +7,16 @@ import { IdleScreen } from './screens/IdleScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { ActiveSessionScreen } from './screens/ActiveSessionScreen';
 import { SummaryScreen } from './screens/SummaryScreen';
+import { VisionCamera } from './vision/VisionCamera';
 
 /**
- * Person B's composition root. Mounted directly by App.tsx.
+ * Composition root. Mounted directly by App.tsx.
  *
- * Owns: screens, face, session state machine, TTS, touch controls. Does
- * not touch the camera — that is Person A's src/vision/ (see 03-architecture.md,
- * "the camera feed is never rendered on the phone screen").
+ * Owns: screens, face, session state machine, TTS, touch controls, and now the
+ * mounting of Person A's camera view — which is rendered invisibly beneath the
+ * UI so it produces landmarks while the patient only ever sees the face
+ * (03-architecture.md, "the camera feed is never rendered on the phone
+ * screen"). See VisionCamera for why it is hidden rather than unmounted.
  */
 export function AppShell() {
   useEffect(() => {
@@ -27,6 +30,11 @@ export function AppShell() {
 
   return (
     <View style={styles.container}>
+      <VisionCamera
+        enabled={controller.cameraNeeded}
+        onPoseFrame={controller.handlePoseFrame}
+      />
+
       {session.phase === 'idle' && <IdleScreen onTapToTalk={controller.startSetup} />}
 
       {session.phase === 'setup' && (
