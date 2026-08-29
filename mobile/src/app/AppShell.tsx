@@ -1,5 +1,5 @@
 import { StyleSheet, View } from 'react-native';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSessionController } from './useSessionController';
 import { useSpeakOnChange } from './voice/useSpeakOnChange';
@@ -11,6 +11,8 @@ import { SummaryScreen } from './screens/SummaryScreen';
 import { VisionCamera } from './vision/VisionCamera';
 import { SecondVoicePanel } from './secondVoice';
 import { DevOverlay } from './DevOverlay';
+import { FallAlertOverlay, useFallAlert } from './fall';
+import type { PoseFrame } from '../types/contracts';
 
 /**
  * Composition root. Mounted directly by App.tsx.
@@ -33,6 +35,14 @@ export function AppShell() {
   const { session } = controller;
   // Expo only inlines EXPO_PUBLIC variables referenced with static dot notation.
   const proxyEndpoint = process.env.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL;
+  const fallAlertEndpoint = process.env.EXPO_PUBLIC_FALL_ALERT_PROXY_URL;
+  const fallAlert = useFallAlert(fallAlertEndpoint);
+  const poseHandlers = useRef({ session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame });
+  poseHandlers.current = { session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame };
+  const handlePoseFrame = useCallback((frame: PoseFrame) => {
+    poseHandlers.current.session(frame);
+    poseHandlers.current.fall(frame);
+  }, []);
 
   // `speaking` closes the microphone for as long as Duo is talking. Without
   // it the wake session hears Duo say "Paused. Tap or say start when ready",
@@ -62,7 +72,7 @@ export function AppShell() {
     <View style={styles.container}>
       <VisionCamera
         enabled={controller.cameraNeeded}
-        onPoseFrame={controller.handlePoseFrame}
+        onPoseFrame={handlePoseFrame}
         onSnapshot={controller.handleSnapshot}
       />
 
@@ -124,6 +134,12 @@ export function AppShell() {
         onOpenChange={setSecondVoiceOpen}
         endpoint={proxyEndpoint}
         phraseHints={['I need a break.', 'Please help me.', 'I would like some water.']}
+      />
+
+      <FallAlertOverlay
+        state={fallAlert.state}
+        onCancel={fallAlert.cancel}
+        onDismiss={fallAlert.dismiss}
       />
     </View>
   );

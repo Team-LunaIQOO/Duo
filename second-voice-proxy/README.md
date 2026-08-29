@@ -10,6 +10,27 @@ OPENROUTER_API_KEY=replace-me node second-voice-proxy/server.mjs
 The proxy uses `openai/gpt-4o` by default and accepts `POST /reconstruct`.
 Set `OPENROUTER_MODEL` to change it without changing app code.
 
+## Fall alerts via Telegram
+
+Create a Telegram bot, have the caregiver start a chat with it, and run the
+proxy with the bot token and that chat's numeric ID. Both values stay on the
+laptop/server and must never be placed in the mobile app:
+
+```sh
+TELEGRAM_BOT_TOKEN=replace-me TELEGRAM_CHAT_ID=replace-me node second-voice-proxy/server.mjs
+```
+
+Point the app at the exact endpoint, for example:
+
+```sh
+EXPO_PUBLIC_FALL_ALERT_PROXY_URL=http://192.168.1.20:8788/fall-alert npx expo run:android
+```
+
+The server accepts only detector-generated event reasons, uses its configured
+chat ID, and rate-limits successful alerts to one per minute. The detector and
+alert are prototype safeguards, not medical devices or replacements for local
+emergency services. Detection only runs while the app's camera is active.
+
 ## Port
 
 Listens on **8788**. Override with `SECOND_VOICE_PORT`.
