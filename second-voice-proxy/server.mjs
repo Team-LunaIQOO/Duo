@@ -257,15 +257,25 @@ const INTENT_SYSTEM = [
   'Shape: {"action":"...","exercise":"E1"|"E3"|null,"side":"left"|"right"|null,"reply":"..."}',
   '',
   'action must be exactly one of:',
-  '  start_exercise  they named an exercise to do',
+  '  start_exercise  they named an exercise to do, or want to begin',
   '  switch_exercise they want a different exercise than the current one',
   '  switch_arm      same exercise, other arm',
   '  pause           stop counting for a moment',
   '  resume          carry on after a pause',
   '  stop            finish the session now',
+  '  restart         start a fresh session after one has ended',
   '  how_many        asking for the rep count',
+  '  progress        asking how they are doing, quality, or which arm is ahead',
   '  repeat          asking you to say the last thing again',
+  '  open_echo       they want to say something to another person, not to you',
   '  none            anything else, including chat you cannot act on',
+  '',
+  'You are navigating a screen, not answering questions. The session state you',
+  'are given says which phase the app is in, and phase decides what is even',
+  'possible: idle and setup can start, active can pause or stop or switch,',
+  'resting can resume, ended can restart. Choose an action that makes sense',
+  'for the phase you were given. If they ask for something the current phase',
+  'cannot do, pick the closest action that can, or none.',
   '',
   'exercise: E1 is shoulder abduction, spoken as shoulder raises, arm raises,',
   'lifting the arm out to the side. E3 is elbow flexion, spoken as bicep curls,',
@@ -280,9 +290,14 @@ const INTENT_SYSTEM = [
   'honest line that you did not catch it.',
 ].join('\n');
 
+// Must stay in step with the action list in INTENT_SYSTEM above. It did not
+// once, and the symptom was silent: the model returned a perfectly good
+// 'restart', validation did not recognise it, and it became 'none' — a working
+// feature that did nothing, with a sensible-sounding reply covering for it.
 const INTENT_ACTIONS = new Set([
   'start_exercise', 'switch_exercise', 'switch_arm',
-  'pause', 'resume', 'stop', 'how_many', 'repeat', 'none',
+  'pause', 'resume', 'stop', 'restart',
+  'how_many', 'progress', 'repeat', 'open_echo', 'none',
 ]);
 
 async function intent(request, response) {
@@ -348,8 +363,6 @@ async function sendFallAlert(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
-  if (request.method !== 'POST') return json(response, 404, { error: 'not_found' });
-
   // One line per request, with how long it took.
   //
   // Without this there is no way to tell "the phone is not calling" from "the
@@ -361,6 +374,20 @@ const server = http.createServer(async (request, response) => {
     const ms = Date.now() - startedAt;
     console.log(`  ${new Date().toISOString().slice(11, 19)}  ${request.url}  ${response.statusCode}  ${ms}ms`);
   });
+
+  // Health is answerable without a POST and without spending a token, so the
+  // phone can ask "can I reach you, and is a key configured" on startup. Those
+  // are two different failures and they were previously indistinguishable from
+  // the phone: both end with Duo speaking its written line.
+  if (request.url === '/health') {
+    return json(response, 200, {
+      ok: true,
+      anthropic: Boolean(anthropicKey),
+      model: anthropicKey ? anthropicModel : null,
+    });
+  }
+
+  if (request.method !== 'POST') return json(response, 404, { error: 'not_found' });
 
   try {
     if (request.url === '/reply') return await reply(request, response);

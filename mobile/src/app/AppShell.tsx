@@ -4,6 +4,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSessionController } from './useSessionController';
 import { useSpeakOnChange } from './voice/useSpeakOnChange';
 import { useSpeechCommands } from './voice/useSpeechCommands';
+import { checkProxyHealth, type ProxyHealth } from './voice/replyClient';
 import { IdleScreen } from './screens/IdleScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { ActiveSessionScreen } from './screens/ActiveSessionScreen';
@@ -69,6 +70,31 @@ export function AppShell() {
   const handleEcho = useCallback((sentence: string) => {
     echoIdRef.current += 1;
     setSpokenToEcho({ id: echoIdRef.current, text: sentence });
+  }, []);
+
+  // "hey duo, I want to say something" routes here through the intent.
+  const { setEchoRequestHandler } = controller;
+  useEffect(() => {
+    setEchoRequestHandler(() => handleEcho(''));
+  }, [setEchoRequestHandler, handleEcho]);
+
+  /**
+   * Ask the proxy once, at startup, whether it is even there.
+   *
+   * Three failures used to be indistinguishable from the phone — laptop not
+   * reachable, proxy not running, no API key — because all three end with Duo
+   * speaking its written line and nothing on screen changing. Now the dev
+   * overlay says which, before the demo instead of after it.
+   */
+  const [proxyHealth, setProxyHealth] = useState<ProxyHealth>({ state: 'checking' });
+  useEffect(() => {
+    let cancelled = false;
+    void checkProxyHealth().then((health) => {
+      if (!cancelled) setProxyHealth(health);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const voice = useSpeechCommands({
@@ -137,6 +163,8 @@ export function AppShell() {
         gestureDebug={controller.gestureDebug}
         voice={voice}
         gaze={controller.gaze}
+        proxyHealth={proxyHealth}
+        replySource={controller.replySource}
       />
 
       <SecondVoicePanel

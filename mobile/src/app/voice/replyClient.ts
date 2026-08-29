@@ -144,3 +144,41 @@ export async function requestReply(request: ReplyRequest): Promise<ReplyOutcome>
 export function replyStatus(): { reachable: boolean } {
   return { reachable: proxyReachable };
 }
+
+export type ProxyHealth =
+  | { state: 'checking' }
+  | { state: 'unreachable'; detail: string }
+  | { state: 'ready'; model: string | null; anthropic: boolean };
+
+/**
+ * Ask the proxy whether it is there, before anything needs it to be.
+ *
+ * Three failures used to look identical from the phone — the laptop not
+ * reachable, the proxy not running, and no API key configured — because all
+ * three end with Duo speaking its written line and nothing on screen changes.
+ * This separates them, costs no tokens, and runs once at startup so the answer
+ * is on the dev overlay before the demo rather than after it.
+ */
+export async function checkProxyHealth(): Promise<ProxyHealth> {
+  const url = REPLY_URL.replace(/\/reply$/, '/health');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return { state: 'unreachable', detail: `http ${response.status}` };
+    const data = (await response.json()) as { anthropic?: boolean; model?: string | null };
+    proxyReachable = true;
+    return {
+      state: 'ready',
+      anthropic: Boolean(data.anthropic),
+      model: typeof data.model === 'string' ? data.model : null,
+    };
+  } catch (error) {
+    return {
+      state: 'unreachable',
+      detail: error instanceof Error && error.name === 'AbortError' ? 'timeout' : 'no route',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}

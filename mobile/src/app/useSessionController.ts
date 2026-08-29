@@ -86,6 +86,15 @@ export function useSessionController() {
   const [replySource, setReplySource] = useState<'claude' | 'local'>('local');
 
   /**
+   * Filled in by AppShell, which owns Echo. Kept as a ref so the controller
+   * can hand over without importing the panel or depending on its state.
+   */
+  const onEchoRequestRef = useRef<(() => void) | null>(null);
+  const setEchoRequestHandler = useCallback((handler: () => void) => {
+    onEchoRequestRef.current = handler;
+  }, []);
+
+  /**
    * What Claude is told about the session. Deliberately small: counts and
    * labels, nothing that could be read back as an assessment.
    */
@@ -623,6 +632,28 @@ export function useSessionController() {
             )
           );
           return true;
+        case 'restart':
+          if (phase === 'ended') restartSession();
+          else if (phase === 'idle') startSetup();
+          return true;
+        case 'progress': {
+          // The model already wrote the line from the context it was given, so
+          // this is a speaking action rather than a state change. The count is
+          // used verbatim if it did not, so it can never answer with nothing.
+          setSession((s) => {
+            const good = s.reps.filter((r) => r.quality === 'good').length;
+            return machine.acknowledge(
+              machine.speak(s, intent.reply || `${s.reps.length} reps, ${good} of them good.`)
+            );
+          });
+          return true;
+        }
+        case 'open_echo':
+          // Handled by AppShell, which owns Echo. Reported as handled so the
+          // keyword failsafe does not also fire on the same sentence.
+          onEchoRequestRef.current?.();
+          speakIntentReply();
+          return true;
         case 'repeat':
           setSession((s) => (s.lastSpoken ? machine.acknowledge(s) : s));
           return true;
@@ -640,6 +671,7 @@ export function useSessionController() {
       resumeSession,
       startSetup,
       endSession,
+      restartSession,
     ]
   );
 
@@ -781,6 +813,7 @@ export function useSessionController() {
     eventLog,
     gaze: gazeRef.current,
     replySource,
+    setEchoRequestHandler,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
     gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,
   };

@@ -26,6 +26,7 @@ import type { FatigueDebug } from '../fatigue';
 import type { GestureDebug } from '../gesture';
 import type { SpeechCommandsStatus } from './voice/useSpeechCommands';
 import type { GazeController } from './face/gaze';
+import type { ProxyHealth } from './voice/replyClient';
 
 type Props = {
   session: SessionState;
@@ -38,6 +39,8 @@ type Props = {
   gestureDebug: () => GestureDebug | null;
   voice: SpeechCommandsStatus;
   gaze?: GazeController;
+  proxyHealth: ProxyHealth;
+  replySource: 'claude' | 'local';
 };
 
 const TAPS_TO_OPEN = 3;
@@ -56,6 +59,8 @@ export function DevOverlay({
   gestureDebug,
   voice,
   gaze,
+  proxyHealth,
+  replySource,
 }: Props) {
   const [taps, setTaps] = useState(0);
   const [open, setOpen] = useState(false);
@@ -156,6 +161,24 @@ export function DevOverlay({
         </Text>
       </Pressable>
       {voice.lastHeard && <Text style={styles.rowDim}>heard "{voice.lastHeard}"</Text>}
+
+      {/*
+        Whether Duo is actually speaking Claude's words or its own written
+        ones. From the outside the two are indistinguishable — that is the
+        point of the fallback — so this is the only place the difference shows.
+      */}
+      <Text style={styles.row}>
+        claude{' '}
+        {proxyHealth.state === 'checking'
+          ? 'checking…'
+          : proxyHealth.state === 'unreachable'
+            ? `UNREACHABLE (${proxyHealth.detail})`
+            : proxyHealth.anthropic
+              ? `ready · ${proxyHealth.model ?? '?'}`
+              : 'proxy up, NO KEY'}
+        {' · last '}
+        {replySource}
+      </Text>
 
       {gaze && (
         <Text style={styles.row}>

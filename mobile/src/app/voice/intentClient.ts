@@ -52,8 +52,11 @@ export type VoiceAction =
   | 'pause'
   | 'resume'
   | 'stop'
+  | 'restart'
   | 'how_many'
+  | 'progress'
   | 'repeat'
+  | 'open_echo'
   | 'none';
 
 export type VoiceIntent = {
@@ -71,8 +74,11 @@ const ACTIONS = new Set<VoiceAction>([
   'pause',
   'resume',
   'stop',
+  'restart',
   'how_many',
+  'progress',
   'repeat',
+  'open_echo',
   'none',
 ]);
 

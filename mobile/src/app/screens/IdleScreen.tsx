@@ -1,6 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Face } from '../face/Face';
-import { MicButton } from '../voice/MicButton';
 import type { SpeechCommandsStatus } from '../voice/useSpeechCommands';
 import type { GazeController } from '../face/gaze';
 import type { SessionState } from '../../types/contracts';
@@ -26,14 +25,20 @@ export function IdleScreen({ onTapToTalk, voice, faceState, gaze }: Props) {
     // start the session underneath.
     <Pressable style={styles.container} onPress={onTapToTalk}>
       <Face state={faceState} size={80} gaze={gaze} />
+      {/*
+        No microphone button. "Hey duo" is the way in, and a button that says
+        "tap to speak" next to a device that is already listening tells the
+        user the opposite of the truth. Tapping anywhere still starts a
+        session — 02-product-spec.md requires touch to reach every function,
+        and that is a fallback, not a prompt.
+      */}
       <Text style={styles.hint}>
         {voice.armed
           ? 'Go ahead…'
           : voice.wakeActive
-            ? 'Say "hey duo", or tap anywhere'
+            ? 'Say "hey duo"'
             : 'Tap anywhere to start'}
       </Text>
-      <MicButton voice={voice} />
     </Pressable>
   );
 }
