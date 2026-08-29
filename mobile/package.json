@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@thinksys/react-native-mediapipe": "0.0.21",
     "expo": "~57.0.18",
     "expo-camera": "~57.0.4",
     "expo-status-bar": "~57.0.1",
