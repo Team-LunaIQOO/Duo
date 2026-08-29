@@ -34,9 +34,6 @@ export function AppShell() {
 
   const controller = useSessionController();
   const { session } = controller;
-  // Expo only inlines EXPO_PUBLIC variables referenced with static dot notation.
-  const proxyEndpoint = process.env.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL
-    ?? 'http://localhost:8788/reconstruct';
   const fallAlertEndpoint = process.env.EXPO_PUBLIC_FALL_ALERT_PROXY_URL;
   const fallAlert = useFallAlert(fallAlertEndpoint);
   const poseHandlers = useRef({ session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame });
@@ -80,12 +77,7 @@ export function AppShell() {
   }, [setEchoRequestHandler, handleEcho]);
 
   /**
-   * Ask the proxy once, at startup, whether it is even there.
-   *
-   * Three failures used to be indistinguishable from the phone — laptop not
-   * reachable, proxy not running, no API key — because all three end with Duo
-   * speaking its written line and nothing on screen changing. Now the dev
-   * overlay says which, before the demo instead of after it.
+   * Confirm the demo bundle has its direct Claude key before the first request.
    */
   const [proxyHealth, setProxyHealth] = useState<ProxyHealth>({ state: 'checking' });
   useEffect(() => {
@@ -172,7 +164,6 @@ export function AppShell() {
         enabled={session.phase !== 'active'}
         onOpenChange={setSecondVoiceOpen}
         spoken={spokenToEcho}
-        endpoint={proxyEndpoint}
         phraseHints={['I need a break.', 'Please help me.', 'I would like some water.']}
       />
 

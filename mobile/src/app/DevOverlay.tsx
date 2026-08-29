@@ -175,8 +175,8 @@ export function DevOverlay({
           : proxyHealth.state === 'unreachable'
             ? `UNREACHABLE (${proxyHealth.detail})`
             : proxyHealth.anthropic
-              ? `ready · ${proxyHealth.model ?? '?'}`
-              : 'proxy up, NO KEY'}
+              ? `bundled · ${proxyHealth.model ?? '?'}`
+              : 'NO BUNDLED KEY'}
         {' · last '}
         {replySource}
       </Text>

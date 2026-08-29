@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as Speech from 'expo-speech';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { ProxyReconstructionProvider } from './openRouterProvider';
+import { AnthropicReconstructionProvider } from './anthropicProvider';
+import { anthropicConfigured } from '../voice/anthropicClient';
 import { PhrasebookFallbackProvider } from './fallbackProvider';
 import { useLocalGemma } from './localGemmaProvider';
 import { useSpeechRecognizer } from './useSpeechRecognizer';
@@ -10,8 +11,6 @@ import { cleanStutteredSpeech } from './speechCleanup';
 
 type Props = {
   enabled: boolean;
-  /** Trusted laptop proxy. The API key must never be placed in this app. */
-  endpoint?: string;
   phraseHints?: string[];
   /**
    * Told whenever this panel opens or closes.
@@ -42,20 +41,20 @@ type Props = {
 };
 
 /** Bounded communication flow backed by Android speech recognition. */
-export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenChange, spoken }: Props) {
+export function SecondVoicePanel({ enabled, phraseHints = [], onOpenChange, spoken }: Props) {
   const [open, setOpen] = useState(false);
   const [state, dispatch] = useReducer(secondVoiceReducer, initialSecondVoiceState);
   const requestVersion = useRef(0);
   const fallback = useMemo(() => new PhrasebookFallbackProvider(), []);
   const localGemma = useLocalGemma();
-  // Prefer private on-device inference. Claude is an availability fallback,
-  // reached only through the trusted proxy; if neither is available, keep the
+  // Prefer private on-device inference. This hackathon build uses its bundled
+  // Claude key only as an availability fallback; otherwise keep the
   // communication aid functional with the deterministic phrasebook.
   const provider = useMemo(
     () => localGemma.isLoaded
       ? localGemma.provider
-      : endpoint ? new ProxyReconstructionProvider({ endpoint, fallback }) : fallback,
-    [endpoint, fallback, localGemma.isLoaded, localGemma.provider]
+      : anthropicConfigured ? new AnthropicReconstructionProvider(fallback) : fallback,
+    [fallback, localGemma.isLoaded, localGemma.provider]
   );
 
   const submit = async (overrideTranscript?: string) => {
@@ -175,8 +174,8 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenCh
           <Pressable style={styles.secondary} onPress={() => void localGemma.downloadModel()}><Text style={styles.secondaryText}>Retry</Text></Pressable>
         </View>}
         {localGemma.isLoaded && <Text style={styles.localReady}>Using on-device Gemma</Text>}
-        {!localGemma.isLoaded && endpoint && (
-          <Text style={styles.cloudNotice}>Using Claude fallback — speech text is sent to your trusted proxy.</Text>
+        {!localGemma.isLoaded && anthropicConfigured && (
+          <Text style={styles.cloudNotice}>Using Claude fallback — demo build key is bundled in this app.</Text>
         )}
       </>}
       {state.phase === 'processing' && <Text style={styles.help}>Preparing your response…</Text>}

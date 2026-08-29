@@ -52,7 +52,7 @@ On-device pose landmarks — Google's BlazePose, the full variant, bundled in th
 > we hadn't measured on this device."*
 >
 > **Say "the exercise session works in airplane mode", not "everything does".**
-> Echo prefers on-device Gemma and falls back to Claude through a laptop proxy.
+> Echo prefers on-device Gemma and falls back to Claude directly in the hackathon build.
 > It is gated out of the active session so the exercise loop really is offline,
 > but the unqualified claim is false while that feature is reachable.
 >

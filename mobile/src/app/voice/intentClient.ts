@@ -2,7 +2,8 @@
  * Turning what the user said into what Duo does, using the model.
  *
  * Duo is driven by speech. This is the layer that decides what a sentence
- * means: the transcript and the session state go to the laptop proxy, Claude
+ * means: the transcript and session state go directly to Claude in this
+ * demo-only bundled-key build.
  * returns one action from a closed list plus the line to say while doing it.
  *
  * It exists because keyword matching only ever understood the phrasings
@@ -29,11 +30,17 @@
  */
 
 import type { ExerciseId } from '../../types/contracts';
+import { parseModelJson, requestAnthropicText } from './anthropicClient';
 
-const DEFAULT_PORT = 8788;
-
-export const INTENT_URL =
-  process.env.EXPO_PUBLIC_DUO_INTENT_URL ?? `http://localhost:${DEFAULT_PORT}/intent`;
+const INTENT_SYSTEM = [
+  "You turn a stroke-rehab user's spoken words into ONE action for a phone app.",
+  'Return JSON only. No markdown, commentary, or code fence.',
+  'Shape: {"action":"...","exercise":"E1"|"E3"|null,"side":"left"|"right"|null,"reply":"..."}',
+  'action must be exactly one of: start_exercise, switch_exercise, switch_arm, pause, resume, stop, restart, how_many, progress, repeat, open_echo, none.',
+  'Use the supplied session phase: idle/setup can start; active can pause, stop, or switch; resting can resume; ended can restart. Choose none when no valid action applies.',
+  'E1 is shoulder/arm raises; E3 is bicep/elbow curls. Set side only when explicitly named or clearly called affected/weaker in context; never guess.',
+  'reply is one calm, plain, non-clinical line under 10 words. For none, honestly say you did not catch it.',
+].join('\n');
 
 /**
  * How long to wait before giving up and parsing locally.
@@ -105,15 +112,14 @@ export async function requestIntent(
   const timer = setTimeout(() => controller.abort(), INTENT_TIMEOUT_MS);
 
   try {
-    const response = await fetch(INTENT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript, context, timeoutMs: 6000 }),
+    const text = await requestAnthropicText({
+      system: INTENT_SYSTEM,
+      user: `They said: ${transcript}\nSession state: ${JSON.stringify(context)}`,
+      maxTokens: 150,
+      temperature: 0,
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`intent_http_${response.status}`);
-
-    const data = (await response.json()) as Partial<VoiceIntent>;
+    const data = parseModelJson(text) as Partial<VoiceIntent>;
     const action = ACTIONS.has(data.action as VoiceAction) ? (data.action as VoiceAction) : 'none';
 
     reachable = true;

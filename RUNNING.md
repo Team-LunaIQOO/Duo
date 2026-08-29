@@ -97,7 +97,7 @@ on for no benefit. Speech
 input is a hand-written native module (`mobile/modules/duo-speech`, Kotlin over
 Android's `SpeechRecognizer`), and reconstruction runs on-device through
 `expo-llm-mediapipe` when the local model is present, falling back to Claude
-through the trusted laptop proxy and then to a local phrasebook. There is
+directly through Anthropic and then to a local phrasebook. There is
 now an **opt-in auto-speak toggle** that skips that approval and speaks the top
 suggestion directly — off by default, and per session. Be careful describing
 this one: with auto-speak on, the phone says a sentence the user has not
@@ -105,54 +105,37 @@ confirmed, reconstructed by a model. Off is the default for a reason. Lives in
 `mobile/src/app/secondVoice/`, and is gated to `phase !== 'active'` so it never
 runs during an exercise session.
 
-### The proxy, and Duo's generated speech
+### Bundled Claude key for the hackathon build
 
 **Duo's spoken lines now come from Claude**, not from the fixed strings in
 `feedbackTable.ts`. Those strings are still there and still matter — they are
 the fallback, and they are what you hear whenever the network is slow or gone.
 
-The API key lives on the laptop, never in the app. Anything an Expo build
-inlines is extractable from the APK, so a key shipped in the app is a key given
-away. Put it in a `.env` at the repo root (it is gitignored):
+For this hackathon build, `mobile/app.config.js` loads the repo `.env` and
+passes its Anthropic values to Expo as `EXPO_PUBLIC_*` variables. The app calls
+Anthropic directly — do **not** start or configure `second-voice-proxy`.
+
+This intentionally embeds the key in the APK. It is acceptable only for a
+short, private demo: use a spend-limited key, do not distribute the APK, and
+revoke the key after the event. Put it in the repo `.env` (gitignored):
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-haiku-4-5
 ```
 
-Then start the proxy — it reads that file itself:
-
-```bash
-node second-voice-proxy/server.mjs
-```
-
-It prints which routes are live. Point the phone at it over USB, the same way
-as the viewer:
-
-```bash
-adb reverse tcp:8788 tcp:8788
-```
-
-Routes: `/reply` generates Duo's lines, `/intent` interprets voice commands,
-`/reconstruct` provides Echo's Claude fallback, and `/fall-alert` is unchanged.
-Without `ANTHROPIC_API_KEY`, the model routes return unavailable and the phone
-uses its deterministic local fallbacks.
+`/reply`, `/intent`, and `/reconstruct` are now direct app-to-Anthropic calls.
+Without `ANTHROPIC_API_KEY`, the app uses its deterministic local fallbacks.
 
 **Every call is allowed to fail.** Requests have a deadline — 700ms for a
 compensation correction, 2.5s for anything else — and when it passes, the
 written line is spoken instead. A correction is worthless once the movement is
-over, so it never waits. If the proxy is not running, Duo sounds exactly like
-it did before and nothing breaks. The dev overlay shows which you are getting.
-
-Then point the app at it:
-
-```bash
-EXPO_PUBLIC_SECOND_VOICE_PROXY_URL=http://<laptop-lan-ip>:8788/reconstruct
-```
+over, so it never waits. If Claude is unreachable, Duo sounds exactly like it
+did before and nothing breaks. The dev overlay shows which you are getting.
 
 **This is the only part of Duo that needs the internet.** Everything else —
 camera, pose model, rep counting, compensation detection, fatigue, TTS — runs
-entirely on the phone. Without the proxy the panel degrades to a local fallback
+entirely on the phone. Without an internet connection the panel degrades to a local fallback
 provider rather than breaking. Be precise about this when pitching: the
 exercise session works in airplane mode, the whole product does not.
 
@@ -179,7 +162,7 @@ product rests on.
 ### How a sentence becomes an action
 
 **Claude decides what you meant.** The transcript and the session state go to
-`/intent` on the proxy, and one action comes back from a closed list, with the
+the Anthropic Messages API, and one action comes back from a closed list, with the
 line to say while doing it. That is why ordinary speech works — "I'm tired,
 let's stop", "can we do the curls with my weaker arm", "that's enough for
 today" are all things people say and none of them are keywords.
@@ -191,7 +174,7 @@ is told **never to guess which arm**: an unheard side comes back null and Duo
 asks, because guessing silently inverts the affected-versus-unaffected
 comparison, which is the measurement the product exists to produce.
 
-**The keyword parser is the failsafe underneath.** If the proxy is down, the
+**The keyword parser is the failsafe underneath.** If Claude is unreachable, the
 phone is offline, or the model takes longer than 2.5 seconds, the old
 deterministic matching runs instead and the written lines are spoken. It also
 gets a turn when the model answers `none` — a phrasing the model missed but the
@@ -388,10 +371,9 @@ Sit further back.
 | Port | Process | Notes |
 |---|---|---|
 | **8787** | `viewer/relay.js` | The laptop viewer. Baked into the phone's `DEFAULT_STREAM_PORT` and the `adb reverse` instructions. Do not reassign it. |
-| **8788** | `second-voice-proxy/server.mjs` | Override with `SECOND_VOICE_PORT`. |
 | **8081** | Metro | `npx expo start --dev-client`. |
 
-The relay and the proxy do **not** fail loudly if both try to take 8787: on
+The relay does **not** fail loudly if another process tries to take 8787: on
 Windows they bind on different address families and requests split silently by
 IPv4 vs IPv6, which sends `adb reverse` traffic to the wrong server and leaves
 the viewer blank with nothing in any log. Keep them apart.
@@ -478,7 +460,7 @@ hidden:
 | Laptop viewer blank | Is `relay.js` running, and did you `adb reverse tcp:8787 tcp:8787`? |
 | Metro port already in use | An old dev server is holding 8081. Kill it and restart. |
 | Left/right reported backwards | Mirror mode. See "Known gaps". |
-| Viewer blank while `relay.js` says it is running | Something else took 8787 — most likely the Second Voice proxy. See "Ports". |
+| Viewer blank while `relay.js` says it is running | Something else took 8787. See "Ports". |
 | The session pauses by itself mid-set | A gesture fired. Open the dev overlay and watch the `gesture` row while you rep — if the hold timer climbs during a rep instead of showing a reject reason, lower `maxElbowRise` or `maxElbowAngleDeg` in `src/gesture/thresholds.ts`. |
 | Holding a hand up does not pause | Get the hand above shoulder height, elbow bent, and hold it still for a second. The overlay names the test that is failing. |
 | No microphone button | The device reports no usable recogniser. Touch and the hand gesture still reach everything. |
@@ -486,4 +468,4 @@ hidden:
 | Saying "hey duo" does nothing | Check the overlay's `wake` row. `paused` means Duo is speaking. `OFF` means it was disabled, or the device has no on-device recognition, in which case the phrase is unavailable by design. |
 | It wakes when nobody said the phrase | The overlay prints the transcript it heard. Add the mis-hearing to the self-test in `src/app/voice/selfTest.ts` before touching the matcher, so the fix is pinned. |
 | Heard, but the wrong thing happened | The overlay logs `VOICE "<transcript>" -> <command>`. `commandParser.ts` matches substrings, so "stop" inside a longer sentence still counts. |
-| Echo returns only a local fallback | Gemma is not loaded and the proxy is stopped, has no `ANTHROPIC_API_KEY`, or has no internet. |
+| Echo returns only a local fallback | Gemma is not loaded and the app has no bundled `ANTHROPIC_API_KEY`, or has no internet. |
