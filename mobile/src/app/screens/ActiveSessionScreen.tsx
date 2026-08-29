@@ -1,5 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Face } from '../face/Face';
+import { MicButton } from '../voice/MicButton';
+import type { SpeechCommandsStatus } from '../voice/useSpeechCommands';
 import type { SessionState } from '../../types/contracts';
 
 type Props = {
@@ -12,6 +14,7 @@ type Props = {
   onResume: () => void;
   onSwitchArm: () => void;
   onEnd: () => void;
+  voice: SpeechCommandsStatus;
 };
 
 const QUALITY_COLOR: Record<string, string> = {
@@ -33,6 +36,7 @@ export function ActiveSessionScreen({
   onResume,
   onSwitchArm,
   onEnd,
+  voice,
 }: Props) {
   const lastRep = session.reps[session.reps.length - 1];
   const qualityColor = lastRep ? QUALITY_COLOR[lastRep.quality] : '#444';
@@ -51,6 +55,7 @@ export function ActiveSessionScreen({
         <Pressable style={styles.sideButton} onPress={onSwitchArm}>
           <Text style={styles.sideButtonText}>Other arm</Text>
         </Pressable>
+        <MicButton voice={voice} compact />
       </View>
 
       <View style={styles.center}>

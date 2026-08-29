@@ -101,14 +101,22 @@ Not in the timed script — there is no room — but have it ready, because
 answer is good:
 
 > Three ways in, and none of them is the only route to anything. Touch always
-> works. Holding a hand up pauses it, either hand, so it works whichever side
-> is affected. Voice commands are parsed but not wired to a recogniser yet —
-> that is honest, it is on the list.
+> works. Holding a hand up pauses it — either hand, so it works whichever side
+> is affected. And spoken commands: tap to talk, then start, pause, stop.
+>
+> No wake phrase, deliberately. The free tier of the wake-word engine won't
+> license a custom phrase on a phone, so rather than half-do it we put a
+> microphone button on the screen, which the accessibility requirement asked
+> for anyway.
 
 The gesture is worth a sentence because of *how* it is done: it is geometry
 over the same pose landmarks that do the compensation detection. No second
 model, no extra dependency, nothing added to the phone. If a judge asks what it
 costs to run, that is the answer.
+
+If the dev overlay showed `CLOUD` rather than `on-device` for the recogniser
+before you went on, do not say the voice control works offline. The *exercise
+loop* does; that claim is unaffected and it is the one that matters.
 
 Do not say it detects an open palm. It detects a raised-hand posture — the
 hand landmarks are not reliable enough for fingers, and claiming otherwise is

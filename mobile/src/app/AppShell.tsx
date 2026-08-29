@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSessionController } from './useSessionController';
 import { useSpeakOnChange } from './voice/useSpeakOnChange';
+import { useSpeechCommands } from './voice/useSpeechCommands';
 import { IdleScreen } from './screens/IdleScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { ActiveSessionScreen } from './screens/ActiveSessionScreen';
@@ -34,6 +35,14 @@ export function AppShell() {
 
   useSpeakOnChange(session.lastSpoken);
 
+  // Speech recognition lives here rather than inside useSessionController, so
+  // the controller keeps no dependency on a native module and can still be
+  // driven by the mocks in src/app/mock/ without a device. Every command it
+  // produces goes through handleHeardSpeech, which routes to the same actions
+  // the touch buttons call (02-product-spec.md: voice must never be the only
+  // route to a function, and touch must never fail).
+  const voice = useSpeechCommands(controller.handleHeardSpeech);
+
   return (
     <View style={styles.container}>
       <VisionCamera
@@ -42,7 +51,9 @@ export function AppShell() {
         onSnapshot={controller.handleSnapshot}
       />
 
-      {session.phase === 'idle' && <IdleScreen onTapToTalk={controller.startSetup} />}
+      {session.phase === 'idle' && (
+        <IdleScreen onTapToTalk={controller.startSetup} voice={voice} />
+      )}
 
       {session.phase === 'setup' && (
         <SetupScreen framed={controller.framed} onChooseExercise={controller.chooseExercise} />
@@ -57,6 +68,7 @@ export function AppShell() {
           onResume={controller.resumeSession}
           onSwitchArm={controller.switchArm}
           onEnd={controller.endSession}
+          voice={voice}
         />
       )}
 
@@ -71,6 +83,7 @@ export function AppShell() {
         eventLog={controller.eventLog}
         fatigueDebug={controller.fatigueDebug}
         gestureDebug={controller.gestureDebug}
+        voice={voice}
       />
 
       <SecondVoicePanel

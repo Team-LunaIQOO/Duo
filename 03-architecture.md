@@ -2,7 +2,7 @@
 
 ## Implementation status (as built)
 
-This document is the design. Six things ended up different once the modules
+This document is the design. Seven things ended up different once the modules
 were integrated on the loaner device. They are recorded here so nobody pitches
 the plan instead of the build.
 
@@ -12,6 +12,7 @@ the plan instead of the build.
 | Phone runs a **WebSocket server** | Phone is a **client**; a relay runs on the laptop | No usable WS server library exists for React Native. Full reasoning in `mobile/src/streaming/ARCHITECTURE-NOTE.md`. Message shapes and rates are unchanged. |
 | `FrameMessage` (camera JPEGs to laptop) | **Not implemented** | The bridge exposes `onLandmark` only — no frame or pixel callback. The viewer shows the skeleton, which this document already treats as the primary signal. |
 | Everything offline | Exercise loop offline; **Second Voice needs the internet** | The communication aid calls OpenRouter through a laptop proxy. Gated to `phase !== 'active'`, so the exercise loop is unaffected. See `second-voice-proxy/README.md`. |
+| Wake word, then STT | **Tap-to-talk, no wake word** | The licensing warning below decided it: Porcupine's free tier will not ship a custom "Hey Duo" on ARM Android. `expo-speech-recognition` provides the STT, on-device where the phone supports it. See `RUNNING.md`, "Voice commands". |
 | Gesture pause as a separate concern | Geometry in `mobile/src/gesture/`, off the same landmark stream | No second model and no new dependency were needed. It reads a raised-hand *posture*, not open fingers — BlazePose's hand points are too weak for that. |
 | `confidence` = detection confidence | Fraction of all 33 landmarks visible | Person A's `toPoseFrame`. Too blunt for seated upper-body work, so framing is re-scoped per exercise in `src/app/vision/useVisionStream.ts`. |
 
@@ -201,6 +202,14 @@ Options:
 - Skip the wake word and use tap-to-talk plus a visible mic button
 
 Verify licensing before anyone spends hours on this. Tap-to-talk is the safe default and the wake word is a stretch goal.
+
+**Decided, 29 August: tap-to-talk, no wake word.** The third option was taken.
+A microphone button was required on screen by `02-product-spec.md` regardless,
+so the wake word was only ever going to add a second way to do the same thing —
+at the cost of a licensing problem, a continuously open microphone, and the
+battery to run it. Speech-to-text itself is built and wired to the existing
+command parser; only the phrase that opens the microphone is a tap instead of a
+word.
 
 ### Warning: Office Kit is not an SDK
 

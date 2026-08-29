@@ -103,6 +103,58 @@ entirely on the phone. Without the proxy the panel degrades to a local fallback
 provider rather than breaking. Be precise about this when pitching: the
 exercise session works in airplane mode, the whole product does not.
 
+## Voice commands
+
+**Tap the microphone button, then say one word.** start, pause, stop, next,
+repeat that, how many. Every one routes to the same action the matching touch
+button calls, so the two can never behave differently.
+
+The button is on the idle screen and in the active session's left column. It
+carries its own listening state, which is the "subtle listening indicator"
+`02-product-spec.md` asks for, and it hides itself entirely if the device
+reports no usable recogniser — a dead microphone button is worse than none,
+because the user cannot tell whether they were heard.
+
+**There is no wake phrase, deliberately.** `03-architecture.md`'s licensing
+warning stands: Porcupine's free tier will not ship a custom "Hey Duo" on ARM
+Android, and the free pre-trained keywords would mean renaming the assistant.
+That warning names tap-to-talk as the safe default, and `02-product-spec.md`
+requires a tap-to-talk button on screen anyway. Saying "hey duo" does nothing,
+and is not meant to.
+
+Grant the microphone without the dialog:
+
+```bash
+adb shell pm grant com.duo.mobile android.permission.RECORD_AUDIO
+```
+
+**On-device or cloud?** This matters, because the pitch claims the exercise
+session works in airplane mode. Android's default recogniser is a cloud
+service, so the app asks for on-device recognition wherever the device supports
+it (Android 13+, offline model present) and falls back rather than failing.
+**Check which one you got before claiming it on stage** — the dev overlay has a
+`voice` row reading `on-device` or `CLOUD`. If it says `CLOUD`, the honest line
+is that the *exercise loop* is offline and the optional voice control is not.
+
+### The dependency, and the risk it carries
+
+`expo-speech-recognition@56.0.4`. Note the version: it is built against **Expo
+SDK 56 while this project is on 57** — that release line does not exist yet. It
+compiles and runs here (verified on the loaner device, 29 August), but it is
+the one dependency in the project that is not version-matched to the SDK.
+
+If it ever breaks a build, it comes out cleanly and nothing else depends on it:
+
+```bash
+npm uninstall expo-speech-recognition
+# remove the expo-speech-recognition block from app.json plugins
+# delete src/app/voice/useSpeechCommands.ts and MicButton.tsx, and the
+# `voice` prop from AppShell, IdleScreen, ActiveSessionScreen, DevOverlay
+npx expo run:android
+```
+
+Touch and the hand gesture reach every function without it.
+
 ## Gesture pause
 
 **Hold a hand up and the session pauses.** Either hand. The posture is a bent
@@ -251,15 +303,9 @@ node .selftest/gesture/selfTest.js
 Three things are not done, and all are written up where they live rather than
 hidden:
 
-- **Voice control is not wired to anything.** `src/app/voice/commandParser.ts`
-  parses start / pause / stop / next / repeat / how many, and
-  `handleHeardSpeech` in `useSessionController.ts` routes each one to the same
-  action the touch buttons call — but nothing calls `handleHeardSpeech`,
-  because there is no speech recognition in the app. `expo-speech` is
-  text-to-speech only; it does not listen. There is no wake phrase either. Both
-  are Tier 3 in `05-build-plan.md`, and both need a native dependency and a
-  rebuild for all three of us, so neither is added without agreeing it first.
-  Touch and gesture cover every function in the meantime.
+- **No wake phrase.** Voice commands work, but only on tap-to-talk. "Hey Duo"
+  does not exist and is not planned — see "Voice commands" above, it is a
+  licensing constraint rather than an oversight.
 
 - **Mirror mode is unvalidated.** `MIRROR_MODE` in
   `src/app/vision/VisionCamera.tsx` defaults to `'none'`. Per
@@ -284,5 +330,8 @@ hidden:
 | Viewer blank while `relay.js` says it is running | Something else took 8787 — most likely the Second Voice proxy. See "Ports". |
 | The session pauses by itself mid-set | A gesture fired. Open the dev overlay and watch the `gesture` row while you rep — if the hold timer climbs during a rep instead of showing a reject reason, lower `maxElbowRise` or `maxElbowAngleDeg` in `src/gesture/thresholds.ts`. |
 | Holding a hand up does not pause | Get the hand above shoulder height, elbow bent, and hold it still for a second. The overlay names the test that is failing. |
-| Voice commands do nothing | There is no speech recognition in the app — `expo-speech` only speaks. See "Known gaps". Touch and the hand gesture cover everything. |
+| No microphone button | The device reports no usable recogniser. Touch and the hand gesture still reach everything. |
+| Microphone button does nothing | Permission. `adb shell pm grant com.duo.mobile android.permission.RECORD_AUDIO`, or read the error code in the overlay's `voice` row. |
+| Saying "hey duo" does nothing | There is no wake phrase. Tap the microphone first. |
+| Heard, but the wrong thing happened | The overlay logs `VOICE "<transcript>" -> <command>`. `commandParser.ts` matches substrings, so "stop" inside a longer sentence still counts. |
 | Second Voice returns nothing | Proxy not running, no `OPENROUTER_API_KEY`, or no internet. It falls back locally rather than erroring. |

@@ -141,6 +141,15 @@ Without that the summary is reps and quality only, and the comparison — the
 measurement `06-demo-and-pitch.md` calls the one a physio cares about — is
 silently absent.
 
+**Voice commands are live, on tap-to-talk.** Tap the microphone, then say
+start, pause, stop, next, repeat that or how many. There is **no wake phrase** —
+do not say "hey Duo" on stage, nothing will happen. Before the demo, open the
+dev overlay and check the `voice` row: if it says `CLOUD` rather than
+`on-device`, do not pair a voice command with the airplane-mode claim in the
+same breath, because on venue wifi it may simply not answer. The safest staging
+is to use touch for the scripted beats and show voice once, deliberately, as an
+accessibility point.
+
 **Gesture pause is live, and the demonstrator needs to know it.** Holding a
 hand up above shoulder height with a bent elbow, still, for about a second,
 pauses the session — the same thing the Pause button does. Verified on the
@@ -173,6 +182,7 @@ keep moving — freezing costs more than the fault does.
 | What breaks | What you say | What you do |
 |---|---|---|
 | Session pauses on its own | "It thought I asked it to stop." | Tap **Resume**. The rep count survives. |
+| A voice command does nothing | "Touch is always there." | Use the button. Never repeat a command twice on stage — it reads as broken even when the second one works. |
 | Pose detection drops | "It's telling me it can't see me clearly — that's deliberate, it won't count reps it isn't sure about." | Reposition, carry on. This is a designed behaviour, not a save. |
 | Laptop viewer disconnects | "The laptop is display only — the session doesn't depend on it." | Ignore it. It reconnects on its own. Keep demoing on the phone. |
 | Relay not running | — | `node viewer/relay.js`. The viewer reconnects by itself once it's up. |

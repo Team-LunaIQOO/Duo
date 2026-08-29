@@ -36,6 +36,16 @@
           "savePhotosPermission": "Duo saves session snapshots to your photos so you can review them later.",
           "isAccessMediaLocationEnabled": false
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Duo listens for short commands like start, pause and stop.",
+          "speechRecognitionPermission": "Duo turns your spoken commands into actions on the screen.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
       ]
     ]
   }

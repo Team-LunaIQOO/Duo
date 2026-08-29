@@ -417,7 +417,17 @@ export function useSessionController() {
   const handleHeardSpeech = useCallback(
     (heard: string) => {
       const command = parseVoiceCommand(heard);
-      if (!command) return;
+      if (!command) {
+        // Something was said and not understood. Blank means the microphone
+        // opened and heard nothing at all, which needs no reply.
+        if (heard.trim()) {
+          logEvent(`VOICE "${heard}" not understood`);
+          setSession((s) => machine.speak(s, CONTROL_LINES.notUnderstood));
+        }
+        return;
+      }
+
+      logEvent(`VOICE "${heard}" -> ${command}`);
 
       switch (command) {
         case 'start':
@@ -443,7 +453,7 @@ export function useSessionController() {
           break;
       }
     },
-    [session.phase, startSetup, resumeSession, pauseSession, endSession]
+    [session.phase, startSetup, resumeSession, pauseSession, endSession, logEvent]
   );
 
   return {

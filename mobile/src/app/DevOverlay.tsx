@@ -24,6 +24,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { SessionState } from '../types/contracts';
 import type { FatigueDebug } from '../fatigue';
 import type { GestureDebug } from '../gesture';
+import type { SpeechCommandsStatus } from './voice/useSpeechCommands';
 
 type Props = {
   session: SessionState;
@@ -34,6 +35,7 @@ type Props = {
   eventLog: string[];
   fatigueDebug: () => FatigueDebug | null;
   gestureDebug: () => GestureDebug | null;
+  voice: SpeechCommandsStatus;
 };
 
 const TAPS_TO_OPEN = 3;
@@ -50,6 +52,7 @@ export function DevOverlay({
   eventLog,
   fatigueDebug,
   gestureDebug,
+  voice,
 }: Props) {
   const [taps, setTaps] = useState(0);
   const [open, setOpen] = useState(false);
@@ -130,6 +133,19 @@ export function DevOverlay({
         gesture {gesture?.posture ? `${gesture.posture} hold ${Math.round(gesture.heldMs)}ms` : (gesture?.reject ?? '—')}
         {gesture?.latched ? ' · latched' : ''} · fired {gesture?.firedCount ?? 0}
       </Text>
+
+      {/*
+        Whether recognition is on-device is not cosmetic: the pitch claims the
+        exercise session works in airplane mode, and a cloud recogniser would
+        make that false. This row is where that claim gets checked before it is
+        made on stage.
+      */}
+      <Text style={styles.row}>
+        voice {voice.available ? (voice.usingOnDevice ? 'on-device' : 'CLOUD') : 'unavailable'}
+        {voice.listening ? ' · listening' : ''}
+        {voice.lastError ? ` · err ${voice.lastError}` : ''}
+      </Text>
+      {voice.lastHeard && <Text style={styles.rowDim}>heard "{voice.lastHeard}"</Text>}
 
       <Text style={styles.rowDim}>
         {eventLog.length === 0 ? 'no events yet' : 'recent events'}
