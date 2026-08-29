@@ -6,6 +6,7 @@
     "@thinksys/react-native-mediapipe": "0.0.21",
     "expo": "~57.0.18",
     "expo-camera": "~57.0.4",
+    "expo-llm-mediapipe": "0.6.0",
     "expo-screen-orientation": "~57.0.2",
     "expo-speech": "~57.0.2",
     "expo-status-bar": "~57.0.1",

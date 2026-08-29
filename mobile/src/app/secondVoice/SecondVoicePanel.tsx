@@ -3,6 +3,8 @@ import * as Speech from 'expo-speech';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { OpenRouterProvider } from './openRouterProvider';
 import { PhrasebookFallbackProvider } from './fallbackProvider';
+import { useLocalGemma } from './localGemmaProvider';
+import { useSpeechRecognizer } from './useSpeechRecognizer';
 import { initialSecondVoiceState, secondVoiceReducer } from './stateMachine';
 
 type Props = {
@@ -17,25 +19,18 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [state, dispatch] = useReducer(secondVoiceReducer, initialSecondVoiceState);
   const fallback = useMemo(() => new PhrasebookFallbackProvider(), []);
+  const localGemma = useLocalGemma();
   const provider = useMemo(
-    () => endpoint ? new OpenRouterProvider({ endpoint, fallback }) : fallback,
-    [endpoint, fallback]
+    () => localGemma.isLoaded
+      ? localGemma.provider
+      : endpoint ? new OpenRouterProvider({ endpoint, fallback }) : fallback,
+    [endpoint, fallback, localGemma.isLoaded, localGemma.provider]
   );
 
-  useEffect(() => {
-    if (state.phase !== 'speaking') return;
-    Speech.stop();
-    Speech.speak(state.text, { rate: 0.95 });
-  }, [state]);
-
-  if (!enabled && !open) return null;
-  if (!open) {
-    return <Pressable style={styles.launch} onPress={() => { setOpen(true); dispatch({ type: 'ACTIVATE' }); }}><Text style={styles.launchText}>Second Voice</Text></Pressable>;
-  }
-
-  const submit = async () => {
-    if (state.phase !== 'listening' || !state.transcript.trim()) return;
-    const transcript = state.transcript.trim();
+  const submit = async (overrideTranscript?: string) => {
+    if (state.phase !== 'listening') return;
+    const transcript = (overrideTranscript ?? state.transcript).trim();
+    if (!transcript) return;
     dispatch({ type: 'SUBMIT_TRANSCRIPT' });
     try {
       const result = await provider.reconstruct({
@@ -54,15 +49,56 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
       dispatch({ type: 'ERROR', message: 'Suggestions are unavailable. Try again or use the phrase directly.' });
     }
   };
+  const speech = useSpeechRecognizer((text) => {
+    dispatch({ type: 'TRANSCRIPT', text });
+    void submit(text);
+  });
+
+  useEffect(() => {
+    if (state.phase !== 'speaking') return;
+    Speech.stop();
+    Speech.speak(state.text, { rate: 0.95 });
+  }, [state]);
+
+  if (!enabled && !open) return null;
+  if (!open) {
+    return <Pressable style={styles.launch} onPress={() => { setOpen(true); dispatch({ type: 'ACTIVATE' }); }}><Text style={styles.launchText}>Second Voice</Text></Pressable>;
+  }
 
   return (
     <View style={styles.panel}>
       <Text style={styles.title}>Second Voice</Text>
       {state.phase === 'listening' && <>
-        <Text style={styles.help}>Type or paste the transcript for now.</Text>
-        <TextInput autoFocus value={state.transcript} onChangeText={(text) => dispatch({ type: 'TRANSCRIPT', text })} onSubmitEditing={submit} placeholder="What did you mean to say?" placeholderTextColor="#777" style={styles.input} />
+        <Text style={styles.help}>Speak naturally; Android will transcribe your words on-device or via its configured speech service.</Text>
+        <Pressable style={styles.primary} onPress={() => void (speech.listening ? speech.stop() : speech.start()).catch((error) => dispatch({ type: 'ERROR', message: error instanceof Error ? error.message : 'Speech recognition failed.' }))}><Text style={styles.primaryText}>{speech.listening ? 'Stop listening' : 'Start listening'}</Text></Pressable>
+        {speech.partial && <Text style={styles.partial}>Heard: {speech.partial}</Text>}
+        {speech.error && <Text style={styles.error}>{speech.error}</Text>}
+        <Text style={styles.help}>Typed fallback</Text>
+        <TextInput value={state.transcript} onChangeText={(text) => dispatch({ type: 'TRANSCRIPT', text })} onSubmitEditing={() => void submit()} placeholder="Type a transcript instead" placeholderTextColor="#777" style={styles.input} />
+        <Pressable
+          style={styles.modelButton}
+          disabled={localGemma.downloadStatus === 'downloading' || localGemma.isCheckingStatus}
+          onPress={async () => {
+            try {
+              if (localGemma.downloadStatus === 'downloaded') await localGemma.loadModel();
+              else await localGemma.downloadModel();
+            } catch (error) {
+              dispatch({ type: 'ERROR', message: error instanceof Error ? error.message : 'Local model setup failed.' });
+            }
+          }}
+        >
+          <Text style={styles.secondaryText}>
+            {localGemma.downloadStatus === 'downloading'
+              ? `Downloading local model ${Math.round(localGemma.downloadProgress * 100)}%`
+              : localGemma.isLoaded
+                ? 'Local Gemma ready'
+                : localGemma.downloadStatus === 'downloaded' ? 'Load local Gemma' : 'Download local Gemma'}
+          </Text>
+        </Pressable>
+        {localGemma.downloadError && <Text style={styles.error}>Local model: {localGemma.downloadError}</Text>}
+        {localGemma.isLoaded && <Text style={styles.localReady}>Using on-device Gemma</Text>}
         <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSpeak }} style={styles.toggle} onPress={() => setAutoSpeak((value) => !value)}><Text style={styles.secondaryText}>{autoSpeak ? '☑ Auto-speak top suggestion' : '☐ Require Speak confirmation'}</Text></Pressable>
-        <Pressable style={styles.primary} onPress={submit}><Text style={styles.primaryText}>Find suggestions</Text></Pressable>
+        <Pressable style={styles.primary} onPress={() => void submit()}><Text style={styles.primaryText}>Find suggestions</Text></Pressable>
       </>}
       {state.phase === 'processing' && <Text style={styles.help}>Finding possible sentences…</Text>}
       {state.phase === 'candidates' && <>
@@ -104,4 +140,7 @@ const styles = StyleSheet.create({
   spoken: { color: '#7fe0a0', fontSize: 20, textAlign: 'center' },
   error: { color: '#ff9b8f' },
   cancel: { alignSelf: 'center', padding: 10 },
+  modelButton: { alignItems: 'center', backgroundColor: '#2b3745', borderRadius: 10, padding: 12 },
+  localReady: { color: '#7fe0a0', fontSize: 13 },
+  partial: { color: '#c8d9ed', fontStyle: 'italic' },
 });
