@@ -39,6 +39,7 @@ export function AppShell() {
       <VisionCamera
         enabled={controller.cameraNeeded}
         onPoseFrame={controller.handlePoseFrame}
+        onSnapshot={controller.handleSnapshot}
       />
 
       {session.phase === 'idle' && <IdleScreen onTapToTalk={controller.startSetup} />}

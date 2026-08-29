@@ -226,11 +226,19 @@ export class StreamPublisher {
    * nothing the viewer displays has actually moved.
    */
   publishStats(payload: StatsPayload): boolean {
+    // sessionElapsedMs is excluded from the dedup key on purpose: it changes
+    // every tick of the 1-second republish timer in useSessionController, and
+    // keying on it would defeat dedup entirely, sending a stats message every
+    // second regardless of whether anything the viewer actually displays
+    // changed. The republish timer already guarantees the timer value reaches
+    // the viewer at 1 Hz without needing to be part of the change detector.
     const key = JSON.stringify([
       payload.reps,
       payload.quality,
       payload.compensations,
       payload.fatigue,
+      payload.repHistory,
+      payload.compensationHistory,
     ]);
 
     if (key === this.lastStatsKey) {
@@ -247,5 +255,15 @@ export class StreamPublisher {
     // stays stale until the value changes again.
     if (!ok) this.lastStatsKey = null;
     return ok;
+  }
+
+  /**
+   * Acknowledgement only, sent once per snapshot request -- never the image
+   * itself. Unthrottled and never deduplicated: two snapshot attempts in a
+   * row must each get their own result, unlike stats where a repeated value
+   * is genuinely nothing new to report.
+   */
+  publishSnapshotResult(payload: { ok: boolean; reason?: string }): boolean {
+    return this.transport.send({ type: 'snapshot_result', ...payload });
   }
 }

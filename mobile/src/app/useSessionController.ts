@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CompensationEvent,
+  CompensationLogEntry,
   ExerciseId,
   PoseFrame,
   RepEvent,
+  RepSummary,
   SessionState,
 } from '../types/contracts';
 import * as machine from './state/sessionMachine';
@@ -19,6 +21,9 @@ import { parseVoiceCommand } from './voice/commandParser';
 import { FatigueDetector } from '../fatigue';
 import { StreamPublisher, WebSocketClientTransport } from '../streaming';
 import { STREAM_URL } from './streamTarget';
+import { captureSnapshot, type SnapshotEvent } from '../vision/mediapipeAdapter';
+import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
 
 /**
  * Single integration point for the pose/rep/compensation stream.
@@ -35,6 +40,13 @@ import { STREAM_URL } from './streamTarget';
 export function useSessionController() {
   const [session, setSession] = useState<SessionState>(machine.createInitialSessionState());
   const previousQualityRef = useRef<RepEvent['quality'] | null>(null);
+
+  // Full-session history for the laptop viewer only (per-side tally,
+  // compensation log, quality timeline). SessionState itself only tracks
+  // *active* compensations by design — this does not change that contract,
+  // it is purely local bookkeeping for what gets published to the stream.
+  const compensationHistoryRef = useRef<CompensationLogEntry[]>([]);
+  const sessionStartedAtRef = useRef<number | null>(null);
 
   const isActive = session.phase === 'active';
 
@@ -85,15 +97,81 @@ export function useSessionController() {
   // "If the laptop disconnects, the session continues unaffected." The
   // transport reconnects on its own and drops rather than queues, so nothing
   // here can stall the session loop.
-  const publisher = useMemo(
-    () => new StreamPublisher(new WebSocketClientTransport({ url: STREAM_URL })),
-    []
-  );
+  const transport = useMemo(() => new WebSocketClientTransport({ url: STREAM_URL }), []);
+  const publisher = useMemo(() => new StreamPublisher(transport), [transport]);
 
   useEffect(() => {
     publisher.start();
     return () => publisher.stop();
   }, [publisher]);
+
+  // A note from the laptop is delivered as an ordinary spoken/captioned line,
+  // the same path every other feedback string takes — never treated as a
+  // command. Held until idle rather than interrupting whatever the user is
+  // doing (04-clinical-logic.md's "one instruction at a time" applies here
+  // too, and a note is lower priority than a live correction).
+  const pendingNoteRef = useRef<string | null>(null);
+  useEffect(() => {
+    transport.onNote = (text) => {
+      pendingNoteRef.current = text;
+    };
+    return () => {
+      transport.onNote = undefined;
+    };
+  }, [transport]);
+
+  useEffect(() => {
+    if (session.phase !== 'idle' || !pendingNoteRef.current) return;
+    const note = pendingNoteRef.current;
+    pendingNoteRef.current = null;
+    setSession((s) => machine.speak(s, note));
+  }, [session.phase]);
+
+  // --- snapshot ------------------------------------------------------------
+  //
+  // The one place in this whole system where a photograph of the person is
+  // captured and stored anywhere. Triggered only by an explicit request from
+  // the laptop viewer (never automatically, never on a timer); the photo
+  // itself never leaves the phone -- it goes to the device's own photo
+  // library via expo-media-library, and only a yes/no result is sent back
+  // over the socket. See contracts.ts, SnapshotRequestMessage/
+  // SnapshotResultMessage.
+  useEffect(() => {
+    transport.onSnapshotRequest = () => {
+      captureSnapshot();
+    };
+    return () => {
+      transport.onSnapshotRequest = undefined;
+    };
+  }, [transport]);
+
+  const handleSnapshot = useCallback(
+    (event: SnapshotEvent) => {
+      void (async () => {
+        try {
+          const { status, canAskAgain } = await MediaLibrary.requestPermissionsAsync();
+          if (status !== 'granted') {
+            publisher.publishSnapshotResult({
+              ok: false,
+              reason: canAskAgain ? 'permission_denied' : 'permission_blocked',
+            });
+            return;
+          }
+
+          const path = `${FileSystem.cacheDirectory}duo-snapshot-${Date.now()}.jpg`;
+          await FileSystem.writeAsStringAsync(path, event.jpegBase64, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          await MediaLibrary.createAssetAsync(path);
+
+          publisher.publishSnapshotResult({ ok: true });
+        } catch {
+          publisher.publishSnapshotResult({ ok: false, reason: 'save_failed' });
+        }
+      })();
+    },
+    [publisher]
+  );
 
   // --- fatigue ------------------------------------------------------------
   // Rebuilt per session and per side: the detector compares the last reps
@@ -154,6 +232,11 @@ export function useSessionController() {
 
       onCompensation: (event: CompensationEvent) => {
         logEvent(`COMP ${event.type} ${event.severity} ${Math.round(event.sustainedMs)}ms`);
+        compensationHistoryRef.current.push({
+          timestamp: event.timestamp,
+          type: event.type,
+          severity: event.severity,
+        });
         setSession((s) => {
           let next = machine.applyCompensation(s, event);
           next = machine.speak(next, COMPENSATION_LINES[event.type]);
@@ -176,12 +259,18 @@ export function useSessionController() {
     quality: '—',
     compensations: [] as string[],
     fatigue: 'none' as string,
+    repHistory: [] as RepSummary[],
+    compensationHistory: [] as CompensationLogEntry[],
+    sessionElapsedMs: undefined as number | undefined,
   });
   statsRef.current = {
     reps: session.reps.length,
     quality: session.reps[session.reps.length - 1]?.quality ?? '—',
     compensations: session.activeCompensations.map((c) => c.type),
     fatigue: session.fatigue,
+    repHistory: session.reps.map((r) => ({ repNumber: r.repNumber, side: r.side, quality: r.quality })),
+    compensationHistory: compensationHistoryRef.current,
+    sessionElapsedMs: sessionStartedAtRef.current === null ? undefined : Date.now() - sessionStartedAtRef.current,
   };
 
   useEffect(() => {
@@ -243,6 +332,8 @@ export function useSessionController() {
 
   const chooseExercise = useCallback((exercise: ExerciseId, affectedSide: 'left' | 'right') => {
     setCurrentArm('affected');
+    sessionStartedAtRef.current = Date.now();
+    compensationHistoryRef.current = [];
     setSession((s) => machine.beginActive(machine.startSetup(s, exercise, affectedSide)));
   }, []);
 
@@ -285,6 +376,8 @@ export function useSessionController() {
   }, []);
   const restartSession = useCallback(() => {
     previousQualityRef.current = null;
+    sessionStartedAtRef.current = null;
+    compensationHistoryRef.current = [];
     publisher.resetSession();
     setCurrentArm('affected');
     setSession(machine.restart());
@@ -334,6 +427,7 @@ export function useSessionController() {
     currentArm,
     cameraNeeded,
     handlePoseFrame,
+    handleSnapshot,
     startSetup,
     chooseExercise,
     switchArm,

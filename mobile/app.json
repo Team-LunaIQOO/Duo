@@ -28,6 +28,14 @@
         {
           "cameraPermission": "Duo needs camera access to watch your exercise reps."
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Duo saves session snapshots to your photos so you can review them later.",
+          "savePhotosPermission": "Duo saves session snapshots to your photos so you can review them later.",
+          "isAccessMediaLocationEnabled": false
+        }
       ]
     ]
   }

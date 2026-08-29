@@ -19,7 +19,7 @@ import { StyleSheet, View } from 'react-native';
 import { useCameraPermissions } from 'expo-camera';
 
 import type { PoseFrame } from '../../types/contracts';
-import { MediaPipePoseView } from '../../vision/mediapipeAdapter';
+import { MediaPipePoseView, type SnapshotEvent } from '../../vision/mediapipeAdapter';
 import type { MirrorMode } from '../../vision/landmarks';
 
 /**
@@ -51,9 +51,10 @@ type Props = {
   enabled: boolean;
   onPoseFrame: (frame: PoseFrame) => void;
   onPermissionDenied?: () => void;
+  onSnapshot?: (event: SnapshotEvent) => void;
 };
 
-export function VisionCamera({ enabled, onPoseFrame, onPermissionDenied }: Props) {
+export function VisionCamera({ enabled, onPoseFrame, onPermissionDenied, onSnapshot }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   // Latches on first enable and never clears — see the note on `enabled`.
   const [started, setStarted] = useState(false);
@@ -79,7 +80,7 @@ export function VisionCamera({ enabled, onPoseFrame, onPermissionDenied }: Props
 
   return (
     <View style={styles.hidden} pointerEvents="none" collapsable={false}>
-      <MediaPipePoseView onPoseFrame={onPoseFrame} mirrorMode={MIRROR_MODE} />
+      <MediaPipePoseView onPoseFrame={onPoseFrame} mirrorMode={MIRROR_MODE} onSnapshot={onSnapshot} />
     </View>
   );
 }

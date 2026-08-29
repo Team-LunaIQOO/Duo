@@ -169,9 +169,16 @@ function parsePort(argv) {
 const PORT = parsePort(process.argv);
 const ROOT = __dirname;
 
-/** Connected viewer sockets. The phone is tracked only for the status log. */
+/** Connected viewer sockets. */
 const viewers = new Set();
-let phoneCount = 0;
+/**
+ * Connected phone sockets. Tracked (not just counted) so a note typed on a
+ * viewer can actually be forwarded — the one message type that flows
+ * viewer -> phone. Everything else from a viewer is still ignored.
+ */
+const phones = new Set();
+
+const MAX_NOTE_LENGTH = 500;
 
 /**
  * Last stats and frame seen, replayed verbatim to each newly connected viewer.
@@ -267,7 +274,7 @@ server.on('upgrade', (req, socket) => {
     if (closed) return;
     closed = true;
     if (role === 'viewer') viewers.delete(send);
-    else phoneCount = Math.max(0, phoneCount - 1);
+    else phones.delete(send);
     socket.destroy();
     logStatus(`${role} disconnected`);
   };
@@ -279,13 +286,45 @@ server.on('upgrade', (req, socket) => {
     if (lastFrame) send(lastFrame, OPCODE.TEXT);
     if (lastStats) send(lastStats, OPCODE.TEXT);
   } else {
-    phoneCount++;
+    phones.add(send);
   }
   logStatus(`${role} connected`);
 
   const push = createDecoder({
     onMessage: (text) => {
-      if (role !== 'phone') return; // viewers are display-only, never sources
+      if (role === 'viewer') {
+        // The only two messages a viewer may originate, both forwarded to
+        // every connected phone. Validated here independently of the
+        // phone-side check in mobile/src/streaming/transport.ts -- the
+        // relay must not trust the far end to be well-behaved. Everything
+        // else from a viewer is silently ignored; viewers stay display-only
+        // for every other message shape.
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          return;
+        }
+
+        if (parsed?.type === 'note' && typeof parsed.text === 'string') {
+          const noteText = parsed.text.trim().slice(0, MAX_NOTE_LENGTH);
+          if (!noteText) return;
+          const noteMessage = JSON.stringify({ type: 'note', text: noteText });
+          for (const phoneSend of phones) phoneSend(noteMessage, OPCODE.TEXT);
+          return;
+        }
+
+        if (parsed?.type === 'snapshot_request') {
+          // Carries no data of its own -- re-serialised rather than relayed
+          // verbatim so a viewer cannot smuggle extra fields to the phone
+          // under this type.
+          const requestMessage = JSON.stringify({ type: 'snapshot_request' });
+          for (const phoneSend of phones) phoneSend(requestMessage, OPCODE.TEXT);
+          return;
+        }
+
+        return;
+      }
 
       // Count message types for the status line. Parsed only to count -- the
       // payload is relayed verbatim, so a malformed message costs nothing.
@@ -341,7 +380,7 @@ function lanAddresses() {
 function logStatus(event) {
   const t = new Date().toISOString().slice(11, 19);
   console.log(
-    `[${t}] ${event.padEnd(22)} phone:${phoneCount} viewers:${viewers.size}  ` +
+    `[${t}] ${event.padEnd(22)} phone:${phones.size} viewers:${viewers.size}  ` +
       `landmarks:${counters.landmarks} frames:${counters.frames} stats:${counters.stats}`
   );
 }
@@ -362,5 +401,5 @@ server.listen(PORT, () => {
 // Report throughput once a second while anything is connected, so a silent
 // stream is obvious during setup rather than at the demo table.
 setInterval(() => {
-  if (phoneCount > 0 || viewers.size > 0) logStatus('status');
+  if (phones.size > 0 || viewers.size > 0) logStatus('status');
 }, 1000).unref();
