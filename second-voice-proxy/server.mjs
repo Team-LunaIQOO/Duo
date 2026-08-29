@@ -349,6 +349,19 @@ async function sendFallAlert(request, response) {
 
 const server = http.createServer(async (request, response) => {
   if (request.method !== 'POST') return json(response, 404, { error: 'not_found' });
+
+  // One line per request, with how long it took.
+  //
+  // Without this there is no way to tell "the phone is not calling" from "the
+  // model is slow" from "the call failed and it fell back" — all three look
+  // identical from the phone, because every one of them ends with Duo saying
+  // its written line. This is the only place the difference is visible.
+  const startedAt = Date.now();
+  response.on('finish', () => {
+    const ms = Date.now() - startedAt;
+    console.log(`  ${new Date().toISOString().slice(11, 19)}  ${request.url}  ${response.statusCode}  ${ms}ms`);
+  });
+
   try {
     if (request.url === '/reply') return await reply(request, response);
     if (request.url === '/intent') return await intent(request, response);

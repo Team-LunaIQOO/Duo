@@ -42,13 +42,27 @@ export const REPLY_URL =
 /**
  * How long Duo waits for a generated line before falling back.
  *
- * Two budgets, because the two cases are not alike. A correction interrupts a
- * movement in progress and is worthless late. A greeting or a summary is
- * allowed to take a beat — nobody is mid-rep.
+ * MEASURED, not guessed. Against claude-haiku-4-5 through this proxy the round
+ * trip is 1.08-1.26s for a reply and 1.30-1.71s for an intent, over USB with a
+ * warm connection.
+ *
+ * The first version of this file set `urgent` to 700ms, reasoning that a
+ * correction is worthless late. That number was picked before anything was
+ * timed, and it was below the floor: every single compensation line silently
+ * fell back to the written table and the model was never once used for the one
+ * beat the demo is built on. A timeout that can never be met is not a safety
+ * margin, it is dead code.
+ *
+ * 1800ms clears the measured range with headroom. The cost is real and worth
+ * stating: a correction now lands about 1.3s after the compensation is
+ * detected, on top of the 400ms the detector already waits to be sure. If that
+ * proves too slow in front of people, drop this back to 700 and corrections
+ * return to the instant written lines — the fallback is not a degraded mode,
+ * it is the original behaviour.
  */
 export const REPLY_TIMEOUT_MS = {
-  urgent: 700,
-  relaxed: 2500,
+  urgent: 1800,
+  relaxed: 3000,
 } as const;
 
 export type ReplyContext = Record<string, unknown>;
