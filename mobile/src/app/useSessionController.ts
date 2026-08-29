@@ -26,6 +26,7 @@ import {
   parseExerciseRequest,
 } from './voice/navigation';
 import { requestReply } from './voice/replyClient';
+import { requestIntent, type VoiceIntent } from './voice/intentClient';
 import { FatigueDetector } from '../fatigue';
 import { GesturePauseDetector, type GestureDebug } from '../gesture';
 import { GazeController } from './face/gaze';
@@ -92,6 +93,9 @@ export function useSessionController() {
   const logEvent = useCallback((line: string) => {
     setEventLog((prev) => [line, ...prev].slice(0, 8));
   }, []);
+  const phaseRef = useRef(session.phase);
+  phaseRef.current = session.phase;
+
   contextRef.current = {
     phase: session.phase,
     exercise: session.exercise,
@@ -557,72 +561,140 @@ export function useSessionController() {
   // use, so the two control methods can never behave differently (see
   // 02-product-spec.md "Control methods": touch must always work as the
   // fallback, voice is never the only route to a function).
-  const handleHeardSpeech = useCallback(
+  /**
+   * Carry out a recognised intent.
+   *
+   * Every branch ends in an action the touch buttons also reach, so speech can
+   * never do something the UI cannot — 02-product-spec.md requires the two to
+   * stay equivalent, and it is what keeps the buttons a real fallback rather
+   * than decoration.
+   */
+  const executeIntent = useCallback(
+    (intent: VoiceIntent, heard: string): boolean => {
+      const phase = phaseRef.current;
+      const speakIntentReply = () => {
+        if (intent.reply) setSession((s) => machine.acknowledge(machine.speak(s, intent.reply)));
+      };
+
+      switch (intent.action) {
+        case 'start_exercise':
+        case 'switch_exercise': {
+          // Treated together on purpose: from an active session "let us do
+          // bicep curls" is a switch, and from idle it is a start, but the
+          // model should not have to know which word the app uses for it.
+          const exercise = intent.exercise ?? otherExercise(session.exercise);
+          const side = intent.side ?? session.affectedSide;
+          if (!side) {
+            // Never guessed. See the note in intentClient.ts.
+            const line = 'Which arm, left or right?';
+            setSession((s) =>
+              machine.acknowledge(
+                machine.speak(s.phase === 'idle' ? { ...s, phase: 'setup' } : s, line)
+              )
+            );
+            return true;
+          }
+          if (phase === 'idle' || phase === 'setup' || phase === 'ended') {
+            chooseExercise(exercise, side);
+          } else {
+            setSession((st) => machine.acknowledge({ ...st, exercise }));
+          }
+          speakIntentReply();
+          return true;
+        }
+        case 'switch_arm':
+          if (phase === 'active' || phase === 'resting') switchArm();
+          else speakIntentReply();
+          return true;
+        case 'pause':
+          if (phase === 'active') pauseSession();
+          return true;
+        case 'resume':
+          if (phase === 'resting') resumeSession();
+          else if (phase === 'idle') startSetup();
+          return true;
+        case 'stop':
+          if (phase === 'active' || phase === 'resting') endSession();
+          return true;
+        case 'how_many':
+          setSession((s) =>
+            machine.acknowledge(
+              machine.speak(s, intent.reply || `${s.reps.length} reps so far.`)
+            )
+          );
+          return true;
+        case 'repeat':
+          setSession((s) => (s.lastSpoken ? machine.acknowledge(s) : s));
+          return true;
+        case 'none':
+        default:
+          return false;
+      }
+    },
+    [
+      session.exercise,
+      session.affectedSide,
+      chooseExercise,
+      switchArm,
+      pauseSession,
+      resumeSession,
+      startSetup,
+      endSession,
+    ]
+  );
+
+  /**
+   * The local failsafe: the keyword parsing that used to be the only path.
+   *
+   * Reached when the model could not be asked, or answered 'none' for
+   * something the keywords do understand. Deterministic, instant, offline.
+   */
+  const handleLocally = useCallback(
     (heard: string) => {
-      // Navigation is checked before the command keywords, because "let us do
-      // some left bicep curls" contains "let us go" style filler that the
-      // start-keyword matcher would otherwise claim first.
+      const phase = phaseRef.current;
+
       if (isSwitchExerciseRequest(heard)) {
-        logEvent(`VOICE "${heard}" -> switch exercise`);
-        if (session.phase === 'active' || session.phase === 'resting') switchExercise();
-        return;
+        logEvent(`VOICE local "${heard}" -> switch exercise`);
+        if (phase === 'active' || phase === 'resting') switchExercise();
+        return true;
       }
 
       if (isOtherArmRequest(heard)) {
-        logEvent(`VOICE "${heard}" -> other arm`);
-        if (session.phase === 'active' || session.phase === 'resting') switchArm();
-        return;
+        logEvent(`VOICE local "${heard}" -> other arm`);
+        if (phase === 'active' || phase === 'resting') switchArm();
+        return true;
       }
 
       const requested = parseExerciseRequest(heard);
       if (requested) {
-        logEvent(
-          `VOICE "${heard}" -> ${requested.exercise} ${requested.side ?? 'side not said'}`
-        );
+        logEvent(`VOICE local "${heard}" -> ${requested.exercise} ${requested.side ?? 'no side'}`);
         if (requested.side) {
-          // Named an exercise and a side: that is a complete instruction, so
-          // start it. Works from idle too — the user should not have to tap
-          // through a setup screen they already spoke past.
           chooseExercise(requested.exercise, requested.side);
         } else {
-          // The side is never guessed. Getting it wrong silently inverts the
-          // affected-versus-unaffected comparison, which is the measurement
-          // this whole product is built on (04-clinical-logic.md).
-          const line = `Which arm, left or right?`;
+          const line = 'Which arm, left or right?';
           setSession((s) =>
-            machine.acknowledge(machine.speak(s.phase === 'idle' ? { ...s, phase: 'setup' } : s, line))
-          );
-          say(
-            `The user asked for ${exerciseName(requested.exercise)} but did not say which arm. Ask which arm, in under six words.`,
-            line
+            machine.acknowledge(
+              machine.speak(s.phase === 'idle' ? { ...s, phase: 'setup' } : s, line)
+            )
           );
         }
-        return;
+        return true;
       }
 
       const command = parseVoiceCommand(heard);
-      if (!command) {
-        // Something was said and not understood. Blank means the microphone
-        // opened and heard nothing at all, which needs no reply.
-        if (heard.trim()) {
-          logEvent(`VOICE "${heard}" not understood`);
-          setSession((s) => machine.speak(s, CONTROL_LINES.notUnderstood));
-        }
-        return;
-      }
+      if (!command) return false;
 
-      logEvent(`VOICE "${heard}" -> ${command}`);
-
+      logEvent(`VOICE local "${heard}" -> ${command}`);
       switch (command) {
         case 'start':
-          if (session.phase === 'idle') startSetup();
-          else if (session.phase === 'resting') resumeSession();
+          if (phase === 'idle') startSetup();
+          else if (phase === 'resting') resumeSession();
           break;
         case 'pause':
-          if (session.phase === 'active') pauseSession();
+          if (phase === 'active') pauseSession();
           break;
         case 'stop':
-          if (session.phase === 'active' || session.phase === 'resting') endSession();
+          if (phase === 'active' || phase === 'resting') endSession();
           break;
         case 'how_many':
           setSession((s) => machine.acknowledge(machine.speak(s, `${s.reps.length} reps so far.`)));
@@ -631,24 +703,60 @@ export function useSessionController() {
           setSession((s) => (s.lastSpoken ? machine.acknowledge(s) : s));
           break;
         case 'next':
-          // No multi-exercise queue yet — acknowledge so voice feedback
-          // stays honest rather than silently doing nothing.
           setSession((s) => machine.acknowledge(s));
           break;
       }
+      return true;
     },
     [
-      session.phase,
+      logEvent,
+      switchExercise,
+      switchArm,
+      chooseExercise,
       startSetup,
       resumeSession,
       pauseSession,
       endSession,
-      logEvent,
-      chooseExercise,
-      switchExercise,
-      switchArm,
-      say,
     ]
+  );
+
+  /**
+   * Everything the user says arrives here.
+   *
+   * The model decides what it meant; the keyword parser is the failsafe when
+   * the model cannot be reached or did not understand. Asynchronous, and
+   * nothing waits on it — a slow answer delays an action, never a rep.
+   */
+  const handleHeardSpeech = useCallback(
+    (heard: string) => {
+      if (!heard.trim()) return;
+
+      void (async () => {
+        const intent = await requestIntent(heard, contextRef.current);
+
+        if (intent && intent.action !== 'none') {
+          logEvent(`VOICE "${heard}" -> ${intent.action}`);
+          setReplySource('claude');
+          if (executeIntent(intent, heard)) return;
+        }
+
+        // Either the model was unreachable, or it understood nothing. The
+        // keywords get a turn either way: a phrasing the model missed but the
+        // list knows is still a command the user is entitled to have work.
+        if (!intent) logEvent(`VOICE "${heard}" -> model unreachable, local parse`);
+        if (handleLocally(heard)) {
+          setReplySource('local');
+          return;
+        }
+
+        // Nothing understood it. The model's own line is a better answer than
+        // the canned one when there is one, since it saw what was actually said.
+        const line = intent?.reply || CONTROL_LINES.notUnderstood;
+        logEvent(`VOICE "${heard}" not understood`);
+        setSession((s) => machine.speak(s, line));
+      })();
+    },
+    [executeIntent, handleLocally, logEvent]
   );
 
   return {

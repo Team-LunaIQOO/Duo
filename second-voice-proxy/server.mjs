@@ -232,6 +232,94 @@ async function reconstructWithAnthropic(request, response) {
   return candidates.length ? json(response, 200, { candidates }) : json(response, 502, { error: 'invalid_model_output' });
 }
 
+
+/*
+ * Intent recognition.
+ *
+ * Duo is driven by speech, and this is where speech becomes an action. The
+ * model gets the raw transcript and the session state, and returns one action
+ * from a closed list plus the line to say while doing it.
+ *
+ * Two things this deliberately refuses to do:
+ *
+ * - Invent an action. The list is fixed, the response is validated against it
+ *   on the way back, and anything unrecognised becomes 'none'. A model that
+ *   improvises a new action would be a model that can do something the app
+ *   never agreed to.
+ * - Guess which arm. If the user names an exercise without a side, the side
+ *   comes back null and the app asks. Getting it wrong silently inverts the
+ *   affected-versus-unaffected comparison, which is the measurement this
+ *   product exists to produce -- 04-clinical-logic.md.
+ */
+const INTENT_SYSTEM = [
+  'You turn a stroke-rehab user\'s spoken words into ONE action for a phone app.',
+  'Return JSON only. No markdown, no commentary, no code fence.',
+  'Shape: {"action":"...","exercise":"E1"|"E3"|null,"side":"left"|"right"|null,"reply":"..."}',
+  '',
+  'action must be exactly one of:',
+  '  start_exercise  they named an exercise to do',
+  '  switch_exercise they want a different exercise than the current one',
+  '  switch_arm      same exercise, other arm',
+  '  pause           stop counting for a moment',
+  '  resume          carry on after a pause',
+  '  stop            finish the session now',
+  '  how_many        asking for the rep count',
+  '  repeat          asking you to say the last thing again',
+  '  none            anything else, including chat you cannot act on',
+  '',
+  'exercise: E1 is shoulder abduction, spoken as shoulder raises, arm raises,',
+  'lifting the arm out to the side. E3 is elbow flexion, spoken as bicep curls,',
+  'elbow curls, curls. null when no exercise was named.',
+  '',
+  'side: only when they actually said left or right, or clearly named the',
+  'affected or weaker arm and you were told which that is. NEVER guess. null',
+  'if unsure.',
+  '',
+  'reply: the one short line Duo speaks while doing it. Under 10 words. Calm,',
+  'plain, never scolding, never clinical. For action none, reply with a brief',
+  'honest line that you did not catch it.',
+].join('\n');
+
+const INTENT_ACTIONS = new Set([
+  'start_exercise', 'switch_exercise', 'switch_arm',
+  'pause', 'resume', 'stop', 'how_many', 'repeat', 'none',
+]);
+
+async function intent(request, response) {
+  if (!anthropicKey) return json(response, 503, { error: 'anthropic_not_configured' });
+  const input = await readBody(request);
+  const transcript = typeof input.transcript === 'string' ? input.transcript.trim() : '';
+  if (!transcript) return json(response, 400, { error: 'transcript_required' });
+
+  const text = await callAnthropic({
+    system: INTENT_SYSTEM,
+    user: [
+      `They said: ${transcript}`,
+      `Session state: ${JSON.stringify(input.context ?? {})}`,
+    ].join('\n'),
+    maxTokens: 150,
+    temperature: 0,
+    timeoutMs: Number(input.timeoutMs) || 6000,
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text.replace(/^```(?:json)?/g, '').replace(/```$/g, '').trim());
+  } catch {
+    return json(response, 502, { error: 'invalid_model_output' });
+  }
+
+  // Validated on the way back, not trusted. Anything off the list is 'none',
+  // which does nothing -- the failure mode of a confused model is silence,
+  // never an action the user did not ask for.
+  const action = INTENT_ACTIONS.has(parsed.action) ? parsed.action : 'none';
+  const exercise = parsed.exercise === 'E1' || parsed.exercise === 'E3' ? parsed.exercise : null;
+  const side = parsed.side === 'left' || parsed.side === 'right' ? parsed.side : null;
+  const reply = typeof parsed.reply === 'string' ? parsed.reply.trim().split('\n')[0] : '';
+
+  return json(response, 200, { action, exercise, side, reply });
+}
+
 async function sendFallAlert(request, response) {
   if (!telegramBotToken || !telegramChatId) return json(response, 503, { error: 'telegram_not_configured' });
   if (alertInFlight || Date.now() - lastAlertAt < alertCooldownMs) return json(response, 429, { error: 'alert_rate_limited' });
@@ -263,6 +351,7 @@ const server = http.createServer(async (request, response) => {
   if (request.method !== 'POST') return json(response, 404, { error: 'not_found' });
   try {
     if (request.url === '/reply') return await reply(request, response);
+    if (request.url === '/intent') return await intent(request, response);
     if (request.url === '/reconstruct') {
       return anthropicKey
         ? await reconstructWithAnthropic(request, response)
@@ -280,6 +369,7 @@ const server = http.createServer(async (request, response) => {
 server.listen(port, '0.0.0.0', () => {
   console.log(`Duo service proxy listening on :${port}`);
   console.log(`  /reply        ${anthropicKey ? `Anthropic ${anthropicModel}` : 'DISABLED (no ANTHROPIC_API_KEY)'}`);
+  console.log(`  /intent       ${anthropicKey ? `Anthropic ${anthropicModel}` : 'DISABLED (no ANTHROPIC_API_KEY)'}`);
   console.log(`  /reconstruct  ${anthropicKey ? `Anthropic ${anthropicModel}` : apiKey ? `OpenRouter ${model}` : 'DISABLED'}`);
   console.log(`  /fall-alert   ${telegramBotToken && telegramChatId ? 'Telegram' : 'DISABLED'}`);
 });

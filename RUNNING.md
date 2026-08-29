@@ -175,10 +175,37 @@ which arm rather than guessing. Guessing would silently invert the
 affected-versus-unaffected comparison, which is the measurement the whole
 product rests on.
 
-Navigation is deliberately **keyword matching, not the language model**: it has
-to work with the proxy down, has to be instant, and must never creatively hear
-"left" as "right". The buttons still do everything, as `02-product-spec.md`
-requires.
+### How a sentence becomes an action
+
+**Claude decides what you meant.** The transcript and the session state go to
+`/intent` on the proxy, and one action comes back from a closed list, with the
+line to say while doing it. That is why ordinary speech works — "I'm tired,
+let's stop", "can we do the curls with my weaker arm", "that's enough for
+today" are all things people say and none of them are keywords.
+
+Two things it cannot do. The action list is **closed and validated on the way
+back**, so anything unrecognised becomes `none` and `none` does nothing — a
+confused model goes quiet, it never does something you did not ask for. And it
+is told **never to guess which arm**: an unheard side comes back null and Duo
+asks, because guessing silently inverts the affected-versus-unaffected
+comparison, which is the measurement the product exists to produce.
+
+**The keyword parser is the failsafe underneath.** If the proxy is down, the
+phone is offline, or the model takes longer than 2.5 seconds, the old
+deterministic matching runs instead and the written lines are spoken. It also
+gets a turn when the model answers `none` — a phrasing the model missed but the
+list knows is still a command you are entitled to have work.
+
+So there are three tiers, and you can see which one you got in the dev overlay:
+
+| | What decides | What Duo says |
+|---|---|---|
+| Model reachable | Claude | Claude |
+| Model down | keyword parser | written lines |
+| Neither understands | — | "Sorry, I didn't catch that." |
+
+The buttons still do everything, as `02-product-spec.md` requires. They are the
+route that cannot fail, and nothing above replaced them.
 
 **The microphone button still works and is still the fallback.** With the wake
 phrase running the microphone is already open, so tapping the button arms the
