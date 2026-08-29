@@ -1,16 +1,16 @@
 import type { ReconstructionProvider, ReconstructionRequest, ReconstructionResult } from './types';
 
-export type OpenRouterProviderOptions = {
-  /** URL of the trusted proxy; never put an OpenRouter key in the app. */
+export type ProxyReconstructionProviderOptions = {
+  /** URL of the trusted proxy; never put a model API key in the app. */
   endpoint: string;
   timeoutMs?: number;
   fallback?: ReconstructionProvider;
 };
 
-export class OpenRouterProvider implements ReconstructionProvider {
+export class ProxyReconstructionProvider implements ReconstructionProvider {
   private readonly timeoutMs: number;
 
-  constructor(private readonly options: OpenRouterProviderOptions) {
+  constructor(private readonly options: ProxyReconstructionProviderOptions) {
     this.timeoutMs = options.timeoutMs ?? 4_000;
   }
 
@@ -26,13 +26,18 @@ export class OpenRouterProvider implements ReconstructionProvider {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`proxy_http_${response.status}`);
-      const body = (await response.json()) as { candidates?: ReconstructionResult['candidates'] };
-      const candidates = Array.isArray(body.candidates) ? body.candidates.slice(0, 3) : [];
+      const body = (await response.json()) as { candidates?: Array<{ text?: unknown }> };
+      const candidates = Array.isArray(body.candidates)
+        ? body.candidates.slice(0, 3).flatMap((candidate, index) => {
+            const text = typeof candidate.text === 'string' ? candidate.text.trim() : '';
+            return text ? [{ id: `anthropic-${index + 1}`, text, rank: (index + 1) as 1 | 2 | 3, source: 'anthropic' as const }] : [];
+          })
+        : [];
       if (!candidates.length) throw new Error('proxy_empty_candidates');
       return {
         requestId: request.requestId,
         candidates,
-        provider: 'openrouter',
+        provider: 'anthropic',
         elapsedMs: Date.now() - started,
       };
     } catch (error) {

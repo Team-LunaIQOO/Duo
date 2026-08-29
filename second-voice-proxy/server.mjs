@@ -35,8 +35,6 @@ import { fileURLToPath } from 'node:url';
 // stream to the viewer hit this server, got a 404, and the laptop skeleton
 // silently never appeared.
 const port = Number(process.env.SECOND_VOICE_PORT ?? 8788);
-const apiKey = process.env.OPENROUTER_API_KEY;
-const model = process.env.OPENROUTER_MODEL ?? 'openai/gpt-4o';
 const anthropicKey = process.env.ANTHROPIC_API_KEY;
 const anthropicModel = process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5';
 const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -45,8 +43,8 @@ const alertCooldownMs = 60_000;
 let lastAlertAt = -Infinity;
 let alertInFlight = false;
 
-if (!apiKey && !anthropicKey && !(telegramBotToken && telegramChatId)) {
-  console.error('Configure ANTHROPIC_API_KEY (or OPENROUTER_API_KEY) and/or both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
+if (!anthropicKey && !(telegramBotToken && telegramChatId)) {
+  console.error('Configure ANTHROPIC_API_KEY and/or both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
   process.exit(1);
 }
 
@@ -64,51 +62,6 @@ const readBody = (request) => new Promise((resolve, reject) => {
   request.on('end', () => resolve(JSON.parse(body)));
   request.on('error', reject);
 });
-
-async function reconstruct(request, response) {
-  if (!apiKey) return json(response, 503, { error: 'second_voice_not_configured' });
-  const input = await readBody(request);
-  if (typeof input.transcript !== 'string' || !input.transcript.trim()) return json(response, 400, { error: 'transcript_required' });
-  const hints = Array.isArray(input.phraseHints) ? input.phraseHints.slice(0, 8) : [];
-  const prompt = [
-    'Reconstruct the user\'s intended sentence from the transcript.',
-    'Return JSON only: {"candidates":[{"text":"...","rank":1}]} with 1 to 3 concise candidates.',
-    'Do not invent facts. Preserve uncertainty. Never include markdown or commentary.',
-    `Transcript: ${input.transcript.trim()}`,
-    `Approved phrase hints: ${JSON.stringify(hints)}`,
-    `Context: ${JSON.stringify(input.context ?? {})}`,
-  ].join('\n');
-  const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://github.com/Team-LunaIQOO/Duo',
-      'X-Title': 'Duo Second Voice',
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      max_tokens: 160,
-      messages: [
-        { role: 'system', content: 'You are a conservative communication assistant. The user must approve every sentence before it is spoken.' },
-        { role: 'user', content: prompt },
-      ],
-    }),
-  });
-  if (!upstream.ok) return json(response, 502, { error: `openrouter_http_${upstream.status}` });
-  const data = await upstream.json();
-  const content = data.choices?.[0]?.message?.content;
-  const parsed = JSON.parse(typeof content === 'string' ? content : '{}');
-  const candidates = Array.isArray(parsed.candidates) ? parsed.candidates.slice(0, 3).map((candidate, index) => ({
-    id: `openrouter-${index + 1}`,
-    text: typeof candidate.text === 'string' ? candidate.text.trim() : '',
-    rank: index + 1,
-    source: 'openrouter',
-  })).filter((candidate) => candidate.text) : [];
-  return candidates.length ? json(response, 200, { candidates }) : json(response, 502, { error: 'invalid_model_output' });
-}
-
 
 // ---------------------------------------------------------------------------
 // Anthropic
@@ -192,6 +145,7 @@ async function reply(request, response) {
 
 /** Echo reconstruction on the Anthropic key. Same contract as /reconstruct. */
 async function reconstructWithAnthropic(request, response) {
+  if (!anthropicKey) return json(response, 503, { error: 'anthropic_not_configured' });
   const input = await readBody(request);
   if (typeof input.transcript !== 'string' || !input.transcript.trim()) {
     return json(response, 400, { error: 'transcript_required' });
@@ -392,11 +346,7 @@ const server = http.createServer(async (request, response) => {
   try {
     if (request.url === '/reply') return await reply(request, response);
     if (request.url === '/intent') return await intent(request, response);
-    if (request.url === '/reconstruct') {
-      return anthropicKey
-        ? await reconstructWithAnthropic(request, response)
-        : await reconstruct(request, response);
-    }
+    if (request.url === '/reconstruct') return await reconstructWithAnthropic(request, response);
     if (request.url === '/fall-alert') return await sendFallAlert(request, response);
     return json(response, 404, { error: 'not_found' });
   } catch (error) {
@@ -410,6 +360,6 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`Duo service proxy listening on :${port}`);
   console.log(`  /reply        ${anthropicKey ? `Anthropic ${anthropicModel}` : 'DISABLED (no ANTHROPIC_API_KEY)'}`);
   console.log(`  /intent       ${anthropicKey ? `Anthropic ${anthropicModel}` : 'DISABLED (no ANTHROPIC_API_KEY)'}`);
-  console.log(`  /reconstruct  ${anthropicKey ? `Anthropic ${anthropicModel}` : apiKey ? `OpenRouter ${model}` : 'DISABLED'}`);
+  console.log(`  /reconstruct  ${anthropicKey ? `Anthropic ${anthropicModel}` : 'DISABLED'}`);
   console.log(`  /fall-alert   ${telegramBotToken && telegramChatId ? 'Telegram' : 'DISABLED'}`);
 });

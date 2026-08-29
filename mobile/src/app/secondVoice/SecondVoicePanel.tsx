@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as Speech from 'expo-speech';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { OpenRouterProvider } from './openRouterProvider';
+import { ProxyReconstructionProvider } from './openRouterProvider';
 import { PhrasebookFallbackProvider } from './fallbackProvider';
 import { useLocalGemma } from './localGemmaProvider';
 import { useSpeechRecognizer } from './useSpeechRecognizer';
@@ -10,6 +10,7 @@ import { cleanStutteredSpeech } from './speechCleanup';
 
 type Props = {
   enabled: boolean;
+  /** Trusted laptop proxy. The API key must never be placed in this app. */
   endpoint?: string;
   phraseHints?: string[];
   /**
@@ -47,10 +48,13 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenCh
   const requestVersion = useRef(0);
   const fallback = useMemo(() => new PhrasebookFallbackProvider(), []);
   const localGemma = useLocalGemma();
+  // Prefer private on-device inference. Claude is an availability fallback,
+  // reached only through the trusted proxy; if neither is available, keep the
+  // communication aid functional with the deterministic phrasebook.
   const provider = useMemo(
     () => localGemma.isLoaded
       ? localGemma.provider
-      : endpoint ? new OpenRouterProvider({ endpoint, fallback }) : fallback,
+      : endpoint ? new ProxyReconstructionProvider({ endpoint, fallback }) : fallback,
     [endpoint, fallback, localGemma.isLoaded, localGemma.provider]
   );
 
@@ -171,6 +175,9 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [], onOpenCh
           <Pressable style={styles.secondary} onPress={() => void localGemma.downloadModel()}><Text style={styles.secondaryText}>Retry</Text></Pressable>
         </View>}
         {localGemma.isLoaded && <Text style={styles.localReady}>Using on-device Gemma</Text>}
+        {!localGemma.isLoaded && endpoint && (
+          <Text style={styles.cloudNotice}>Using Claude fallback — speech text is sent to your trusted proxy.</Text>
+        )}
       </>}
       {state.phase === 'processing' && <Text style={styles.help}>Preparing your response…</Text>}
       {state.phase === 'speaking' && <><Text style={styles.spoken}>{state.text}</Text><Text style={styles.help}>Spoken automatically.</Text></>}
@@ -195,6 +202,7 @@ const styles = StyleSheet.create({
   cancel: { alignSelf: 'center', padding: 10 },
   modelButton: { alignItems: 'center', backgroundColor: '#2b3745', borderRadius: 10, padding: 12 },
   localReady: { color: '#7fe0a0', fontSize: 13 },
+  cloudNotice: { color: '#f0c979', fontSize: 13, textAlign: 'center' },
   partial: { color: '#c8d9ed', fontStyle: 'italic' },
   modelError: { gap: 8, padding: 12, borderRadius: 10, backgroundColor: '#321f2b' },
 });

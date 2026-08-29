@@ -41,7 +41,7 @@ to the wrong one and the viewer just stays blank. Fixed, but worth knowing.
 
    If demoing Second Voice, start its proxy too, in another terminal:
    ```
-   OPENROUTER_API_KEY=... node second-voice-proxy/server.mjs
+   ANTHROPIC_API_KEY=... node second-voice-proxy/server.mjs
    ```
    It refuses to start without a key. **This is the one part of the product
    that needs the internet** — check connectivity before relying on it, and

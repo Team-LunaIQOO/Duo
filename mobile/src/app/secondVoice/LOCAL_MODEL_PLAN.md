@@ -1,7 +1,7 @@
 # Local model migration plan
 
 The branch now contains an experimental Gemma 3 1B INT4 MediaPipe runtime behind
-the existing `ReconstructionProvider` interface. OpenRouter and the
+the existing `ReconstructionProvider` interface. Claude through the proxy and the
 deterministic phrasebook remain fallbacks. This is a device spike, not evidence
 that Gemma 3n performance is acceptable on the target phone.
 

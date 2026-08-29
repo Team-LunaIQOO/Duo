@@ -1,4 +1,4 @@
-export type CandidateSource = 'phrasebook' | 'openrouter' | 'local' | 'verbatim';
+export type CandidateSource = 'phrasebook' | 'anthropic' | 'local' | 'verbatim';
 
 export type SecondVoiceContext = {
   exercise?: string | null;

@@ -96,8 +96,8 @@ sees changed. Moving the folder would have invalidated the branch this arrived
 on for no benefit. Speech
 input is a hand-written native module (`mobile/modules/duo-speech`, Kotlin over
 Android's `SpeechRecognizer`), and reconstruction runs on-device through
-`expo-llm-mediapipe` when the local model is present, falling back to the
-OpenRouter proxy and then to a local phrasebook. There is
+`expo-llm-mediapipe` when the local model is present, falling back to Claude
+through the trusted laptop proxy and then to a local phrasebook. There is
 now an **opt-in auto-speak toggle** that skips that approval and speaks the top
 suggestion directly — off by default, and per session. Be careful describing
 this one: with auto-speak on, the phone says a sentence the user has not
@@ -133,9 +133,10 @@ as the viewer:
 adb reverse tcp:8788 tcp:8788
 ```
 
-Routes: `/reply` generates Duo's lines, `/reconstruct` powers Echo, and
-`/fall-alert` is unchanged. With `ANTHROPIC_API_KEY` set, Echo uses Claude too;
-without it, it falls back to OpenRouter if `OPENROUTER_API_KEY` is set.
+Routes: `/reply` generates Duo's lines, `/intent` interprets voice commands,
+`/reconstruct` provides Echo's Claude fallback, and `/fall-alert` is unchanged.
+Without `ANTHROPIC_API_KEY`, the model routes return unavailable and the phone
+uses its deterministic local fallbacks.
 
 **Every call is allowed to fail.** Requests have a deadline — 700ms for a
 compensation correction, 2.5s for anything else — and when it passes, the
@@ -485,4 +486,4 @@ hidden:
 | Saying "hey duo" does nothing | Check the overlay's `wake` row. `paused` means Duo is speaking. `OFF` means it was disabled, or the device has no on-device recognition, in which case the phrase is unavailable by design. |
 | It wakes when nobody said the phrase | The overlay prints the transcript it heard. Add the mis-hearing to the self-test in `src/app/voice/selfTest.ts` before touching the matcher, so the fix is pinned. |
 | Heard, but the wrong thing happened | The overlay logs `VOICE "<transcript>" -> <command>`. `commandParser.ts` matches substrings, so "stop" inside a longer sentence still counts. |
-| Second Voice returns nothing | Proxy not running, no `OPENROUTER_API_KEY`, or no internet. It falls back locally rather than erroring. |
+| Echo returns only a local fallback | Gemma is not loaded and the proxy is stopped, has no `ANTHROPIC_API_KEY`, or has no internet. |

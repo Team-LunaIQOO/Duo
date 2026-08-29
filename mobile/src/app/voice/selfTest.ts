@@ -67,6 +67,7 @@ expectWake('hey duo start', 'start');
 expectWake('hey duo, stop', 'stop');
 expectWake('hey duo how many', 'how many');
 expectWake('hey duo pause the session', 'pause the session');
+expectWake('hey duo I am tired can we take a break', 'i am tired can we take a break');
 
 // ---------------------------------------------------------------------------
 console.log('\n2. Mis-hearings a general recogniser actually produces');

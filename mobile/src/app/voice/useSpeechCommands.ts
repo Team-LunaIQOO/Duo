@@ -420,10 +420,13 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
         return;
       }
 
-      const command = wake.remainder ? parseVoiceCommand(wake.remainder) : null;
-      if (command) {
-        // "hey duo start" in one breath. The command runs immediately and the
-        // armed window is not opened — the user already said what they wanted.
+      if (wake.remainder) {
+        // Any complete sentence after an unambiguous "hey duo" goes to the
+        // intent layer. The old version dispatched only when the local keyword
+        // parser already understood the remainder, which prevented Claude from
+        // ever seeing the natural phrasings it exists to interpret.
+        // Ambiguous wake tokens such as "hey do" remain protected inside
+        // matchWakePhrase, so ordinary conversation is not routed here.
         disarm();
         onHeardRef.current(wake.remainder);
       } else {

@@ -1,14 +1,18 @@
-# Second Voice OpenRouter proxy
+# Duo service proxy
 
-The mobile app must never contain an OpenRouter API key. Run this small proxy on
-the laptop during development/demo and point the app at the laptop's LAN address.
+The mobile app must never contain model API keys. Run this small proxy on the
+laptop during development/demo. It serves Claude-powered Duo replies and voice
+intent routing, plus optional Telegram fall alerts.
 
 ```sh
-OPENROUTER_API_KEY=replace-me node second-voice-proxy/server.mjs
+ANTHROPIC_API_KEY=replace-me node second-voice-proxy/server.mjs
 ```
 
-The proxy uses `openai/gpt-4o` by default and accepts `POST /reconstruct`.
-Set `OPENROUTER_MODEL` to change it without changing app code.
+Second Voice/Echo prefers on-device Gemma when the model is loaded. Before
+that, it may call `POST /reconstruct` through this trusted proxy, which uses
+Claude when `ANTHROPIC_API_KEY` is configured. If the proxy is unavailable it
+falls back again to the deterministic local phrasebook. The app labels the
+cloud mode because the recognised speech text leaves the phone in that mode.
 
 ## Fall alerts via Telegram
 
@@ -45,9 +49,7 @@ stay blank with nothing in any log to explain it.
 
 ## What this means for the offline claim
 
-This is the only part of Duo that needs the internet. `README.md` rule #1 scopes
-that rule to pose detection, movement analysis and feedback generation, and the
-panel is gated to `phase !== 'active'`, so the exercise loop itself still runs
-fully offline — but be precise when pitching. "The exercise session works in
-airplane mode" is true. "Everything works in airplane mode" is not, while this
-feature is on and reaching OpenRouter.
+Claude-powered intent interpretation, generated feedback, and the Echo fallback
+need the internet. Pose detection, rep counting, safety rules, Gemma, TTS, and
+the deterministic command/phrasebook fallbacks remain local. The app continues
+to function offline, but its model-generated cloud features do not.

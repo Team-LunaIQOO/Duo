@@ -11,8 +11,8 @@
  * It goes to `second-voice-proxy` on the laptop, which holds ANTHROPIC_API_KEY
  * and calls the Messages API. Expo only inlines EXPO_PUBLIC_ variables and
  * anything inlined is extractable from the APK, so a key shipped in the app is
- * a key given away. Same reasoning that put the OpenRouter key behind this
- * proxy in the first place.
+ * a key given away. The trusted proxy is the only component that holds the
+ * Anthropic credential.
  *
  * ## Every call is allowed to fail
  *

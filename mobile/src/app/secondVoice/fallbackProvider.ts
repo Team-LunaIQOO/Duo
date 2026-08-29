@@ -22,7 +22,7 @@ export class PhrasebookFallbackProvider implements ReconstructionProvider {
       candidates,
       provider: candidates.some((candidate) => candidate.source === 'phrasebook') ? 'phrasebook' : 'verbatim',
       elapsedMs: Date.now() - started,
-      degradedReason: 'openrouter_unavailable',
+      degradedReason: 'remote_model_unavailable',
     };
   }
 }

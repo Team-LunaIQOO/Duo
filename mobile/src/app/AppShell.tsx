@@ -35,7 +35,8 @@ export function AppShell() {
   const controller = useSessionController();
   const { session } = controller;
   // Expo only inlines EXPO_PUBLIC variables referenced with static dot notation.
-  const proxyEndpoint = process.env.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL;
+  const proxyEndpoint = process.env.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL
+    ?? 'http://localhost:8788/reconstruct';
   const fallAlertEndpoint = process.env.EXPO_PUBLIC_FALL_ALERT_PROXY_URL;
   const fallAlert = useFallAlert(fallAlertEndpoint);
   const poseHandlers = useRef({ session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame });
