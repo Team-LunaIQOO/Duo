@@ -29,9 +29,12 @@ export function secondVoiceReducer(state: SecondVoiceState, action: SecondVoiceA
     case 'SUBMIT_TRANSCRIPT': return state.phase === 'listening' && state.transcript.trim() ? { phase: 'processing', transcript: state.transcript.trim() } : state;
     case 'RESULT': return { phase: 'candidates', transcript: action.transcript, candidates: action.candidates, selectedId: null };
     case 'SELECT': return state.phase === 'candidates' && state.candidates.some((candidate) => candidate.id === action.id) ? { ...state, selectedId: action.id } : state;
-    case 'EDIT': return state.phase === 'candidates' && state.selectedId
-      ? { phase: 'editing', transcript: state.transcript, candidates: state.candidates, selectedId: state.selectedId, draft: action.draft }
-      : state;
+    case 'EDIT': {
+      if (state.phase === 'candidates' && state.selectedId) {
+        return { phase: 'editing', transcript: state.transcript, candidates: state.candidates, selectedId: state.selectedId, draft: action.draft };
+      }
+      return state.phase === 'editing' ? { ...state, draft: action.draft } : state;
+    }
     case 'CONFIRM_SPEAK': {
       if (state.phase === 'candidates' && state.selectedId) {
         const selected = state.candidates.find((candidate) => candidate.id === state.selectedId);

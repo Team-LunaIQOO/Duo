@@ -8,6 +8,7 @@ import { SetupScreen } from './screens/SetupScreen';
 import { ActiveSessionScreen } from './screens/ActiveSessionScreen';
 import { SummaryScreen } from './screens/SummaryScreen';
 import { VisionCamera } from './vision/VisionCamera';
+import { SecondVoicePanel } from './secondVoice';
 
 /**
  * Composition root. Mounted directly by App.tsx.
@@ -20,11 +21,15 @@ import { VisionCamera } from './vision/VisionCamera';
  */
 export function AppShell() {
   useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {
+      // Orientation is a presentation preference; a transient activity teardown
+      // must not surface as an uncaught error or interrupt the session UI.
+    });
   }, []);
 
   const controller = useSessionController();
   const { session } = controller;
+  const proxyEndpoint = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env?.EXPO_PUBLIC_SECOND_VOICE_PROXY_URL;
 
   useSpeakOnChange(session.lastSpoken);
 
@@ -51,6 +56,12 @@ export function AppShell() {
       )}
 
       {session.phase === 'ended' && <SummaryScreen session={session} onRestart={controller.restartSession} />}
+
+      <SecondVoicePanel
+        enabled={session.phase !== 'active'}
+        endpoint={proxyEndpoint}
+        phraseHints={['I need a break.', 'Please help me.', 'I would like some water.']}
+      />
     </View>
   );
 }
