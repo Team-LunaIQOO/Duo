@@ -92,6 +92,8 @@ export type FiredSignals = {
 export type FatigueDebug = {
   repsSeen: number;
   ready: boolean;
+  /** Window sizes actually used, after shrinking. Null before `ready`. */
+  windows: { early: number; recent: number } | null;
   romRatio: number;
   durationRatio: number;
   instabilityRatio: number;
@@ -286,16 +288,15 @@ export class FatigueDetector {
 
   /** Runs the three rules over the current windows. Pure with respect to state. */
   private evaluate(): FatigueDebug {
-    const { earlyWindowSize, recentWindowSize, minRepsBeforeFatigue } = this.th;
     const repsSeen = this.reps.length;
-    const ready = repsSeen >= minRepsBeforeFatigue;
+    const windows = chooseWindows(repsSeen, this.th);
 
-    if (!ready) {
+    if (!windows) {
       return { ...this.emptyDebug(), repsSeen, ready: false };
     }
 
-    const early = this.reps.slice(0, earlyWindowSize);
-    const recent = this.reps.slice(-recentWindowSize);
+    const early = this.reps.slice(0, windows.early);
+    const recent = this.reps.slice(-windows.recent);
 
     const romRatio = safeRatio(
       mean(recent.map((r) => r.peakAngle)),
@@ -334,6 +335,7 @@ export class FatigueDetector {
     return {
       repsSeen,
       ready: true,
+      windows,
       romRatio,
       durationRatio,
       instabilityRatio,
@@ -348,6 +350,7 @@ export class FatigueDetector {
     return {
       repsSeen: this.reps.length,
       ready: false,
+      windows: null,
       romRatio: NaN,
       durationRatio: NaN,
       instabilityRatio: NaN,
@@ -357,6 +360,45 @@ export class FatigueDetector {
       framesSkipped: this.framesSkipped,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Window selection
+// ---------------------------------------------------------------------------
+
+/**
+ * Picks the early and recent window sizes for a given rep count.
+ *
+ * 04-clinical-logic.md specifies "the last 5 reps compared against the first 3
+ * reps". Those are treated as maximums rather than fixed sizes, because a demo
+ * set is short: requiring a full 3 + 5 means nothing can fire until rep 8,
+ * and 06-demo-and-pitch.md beat 5 needs fatigue to appear near the end of a
+ * set that may only run to nine or ten.
+ *
+ * The windows are never allowed to overlap. An overlapping window compares a
+ * set of reps partly against itself, which pulls every ratio toward 1.0 and
+ * quietly mutes the detector — a far worse failure than firing slightly late,
+ * because it looks like the feature simply does not work.
+ *
+ * Returns null when there are not yet enough reps to say anything.
+ */
+export function chooseWindows(
+  repsSeen: number,
+  th: Pick<
+    FatigueThresholds,
+    'earlyWindowSize' | 'recentWindowSize' | 'minRepsBeforeFatigue' | 'minWindowSize'
+  >
+): { early: number; recent: number } | null {
+  if (repsSeen < th.minRepsBeforeFatigue) return null;
+
+  // Give the early window at most half the reps, so the recent window always
+  // has room, then let the recent window take what is left up to its maximum.
+  const early = Math.min(th.earlyWindowSize, Math.floor(repsSeen / 2));
+  const recent = Math.min(th.recentWindowSize, repsSeen - early);
+
+  if (early < th.minWindowSize || recent < th.minWindowSize) return null;
+
+  return { early, recent };
 }
 
 // ---------------------------------------------------------------------------

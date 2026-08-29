@@ -27,18 +27,25 @@ export type FatigueThresholds = {
   /**
    * Reps required before any fatigue signal may fire.
    *
-   * TUNE. Defaults to earlyWindowSize + recentWindowSize so the two windows
-   * never overlap — comparing a set of reps against itself always yields a
-   * ratio of 1.0 and is meaningless.
+   * TUNE. The windows above are *maximums*, not fixed sizes: below
+   * earlyWindowSize + recentWindowSize reps they shrink to stay disjoint
+   * (see chooseWindows in fatigueDetector.ts). Overlapping windows would
+   * compare a set of reps partly against itself, which drags every ratio
+   * toward 1.0 and mutes the signal.
    *
-   * DEMO RISK: at the default of 8, a demo set of 9-10 reps only starts
-   * evaluating fatigue at rep 8. 06-demo-and-pitch.md beat 5 needs fatigue to
-   * fire on "two or three visibly slower, smaller reps". Either lengthen the
-   * demo set or lower this — but lowering it below 8 makes the windows
-   * overlap, which weakens the signal. Decide this during calibration, not
-   * on stage.
+   * This is why the default is 6 rather than 8: a demo set is short, and
+   * 06-demo-and-pitch.md beat 5 needs fatigue to fire on "two or three
+   * visibly slower, smaller reps" near the end of it. At 6, the comparison is
+   * first-3 against last-3, which is still disjoint and still honest — just
+   * noisier than a full 3-against-5.
    */
   minRepsBeforeFatigue: number;
+
+  /**
+   * Smallest acceptable window on either side. Below this a mean is being
+   * taken over so few reps that the ratio is noise.
+   */
+  minWindowSize: number; // TUNE
 
   /** romRatio = mean(recent peak angles) / mean(early peak angles). */
   romDecayRatio: number; // TUNE — fires when romRatio < this
@@ -79,7 +86,8 @@ export type FatigueThresholds = {
 export const DEFAULT_FATIGUE_THRESHOLDS: FatigueThresholds = {
   earlyWindowSize: 3,
   recentWindowSize: 5,
-  minRepsBeforeFatigue: 8, // TUNE (= 3 + 5, disjoint windows)
+  minRepsBeforeFatigue: 6, // TUNE — windows shrink to stay disjoint below 8
+  minWindowSize: 3, // TUNE
 
   romDecayRatio: 0.85, // TUNE
   timingDriftRatio: 1.3, // TUNE
@@ -99,6 +107,7 @@ export const DEFAULT_FATIGUE_THRESHOLDS: FatigueThresholds = {
  */
 export const TUNE_KEYS: readonly (keyof FatigueThresholds)[] = [
   'minRepsBeforeFatigue',
+  'minWindowSize',
   'romDecayRatio',
   'timingDriftRatio',
   'instabilityRatio',

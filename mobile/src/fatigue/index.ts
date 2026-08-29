@@ -5,7 +5,12 @@
  * the FatigueSignal type from src/types/contracts.ts.
  */
 
-export { FatigueDetector, computeInstability, primaryReason } from './fatigueDetector';
+export {
+  FatigueDetector,
+  chooseWindows,
+  computeInstability,
+  primaryReason,
+} from './fatigueDetector';
 export type {
   FatigueDebug,
   FatigueDetectorOptions,

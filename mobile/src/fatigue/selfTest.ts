@@ -19,7 +19,7 @@
  * Real numbers come from the device.
  */
 
-import { FatigueDetector } from './fatigueDetector';
+import { chooseWindows, FatigueDetector } from './fatigueDetector';
 import { generateMockSession, type MockOptions } from './mock/mockPoseSource';
 import { DEFAULT_FATIGUE_THRESHOLDS } from './thresholds';
 import type { FatigueSignal } from '../types/contracts';
@@ -183,13 +183,81 @@ console.log(
 
 // --- 3. Nothing may fire before the minimum rep count. ---------------------
 
-section('3. Short session (5 reps) must stay silent');
+section('3. Short session must stay silent');
 const short = runSession(
-  { repCount: 5, fatigueStartRep: 1, romDecayPerRep: 0.2, seed: 3 },
+  { repCount: DEFAULT_FATIGUE_THRESHOLDS.minRepsBeforeFatigue - 1, fatigueStartRep: 1, romDecayPerRep: 0.2, seed: 3 },
   new FatigueDetector({ workingSide: 'left', exercise: 'E1' })
 );
 check('no signal below minRepsBeforeFatigue', short.signals.length === 0);
 check('debug reports not-ready', !short.detector.debug.ready);
+check('no windows chosen while not ready', short.detector.debug.windows === null);
+
+// --- 3b. Windows must shrink rather than overlap. -------------------------
+
+section('3b. Window selection');
+{
+  const th = DEFAULT_FATIGUE_THRESHOLDS;
+  const at = (n: number) => chooseWindows(n, th);
+
+  check('nothing below the minimum', at(th.minRepsBeforeFatigue - 1) === null);
+
+  for (const n of [6, 7, 8, 9, 12, 30]) {
+    const w = at(n);
+    if (!w) {
+      failures++;
+      console.log(`  FAIL  ${n} reps produced no windows`);
+      continue;
+    }
+    const disjoint = w.early + w.recent <= n;
+    console.log(
+      `  ${String(n).padStart(2)} reps -> early ${w.early}, recent ${w.recent}` +
+        `${disjoint ? '' : '   OVERLAP'}`
+    );
+    if (!disjoint) {
+      failures++;
+      console.log(`  FAIL  windows overlap at ${n} reps`);
+    }
+  }
+
+  let overlapAt: number | null = null;
+  for (let n = 0; n <= 100; n++) {
+    const w = at(n);
+    if (w && w.early + w.recent > n) {
+      overlapAt = n;
+      break;
+    }
+  }
+  check(
+    'windows never overlap, for any rep count up to 100',
+    overlapAt === null,
+    `overlaps at ${overlapAt} reps`
+  );
+
+  const full = at(20);
+  check(
+    'at a long session the documented 3-and-5 windows are used',
+    full?.early === th.earlyWindowSize && full?.recent === th.recentWindowSize,
+    JSON.stringify(full)
+  );
+}
+
+// --- 3c. A short demo-length set must still be able to fire. --------------
+
+section('3c. Demo-length set (9 reps) can still reach fatigue');
+const demoLength = runSession(
+  { repCount: 9, fatigueStartRep: 5, romDecayPerRep: 0.08, durationGrowthPerRep: 0.12, seed: 31 },
+  new FatigueDetector({ workingSide: 'left', exercise: 'E1' })
+);
+check(
+  'fatigue is reachable within a 9-rep set',
+  demoLength.signals.length > 0,
+  `level ${demoLength.finalLevel}`
+);
+console.log(
+  `  signals: ${demoLength.signals
+    .map((s) => `${s.level}/${s.reason}@rep-end ${Math.round(s.timestamp)}ms`)
+    .join(', ') || 'none'}`
+);
 
 // --- 4. Unusable frames must be skipped, not fed in as zeroes. -------------
 
