@@ -73,8 +73,9 @@ then add the context:
 
 ## 3:00–3:45 — How it works
 
-> Everything you just saw ran on the phone. The pose landmarks come from a
-> model running on the device's NPU. No cloud, no network calls. It works in
+> Everything you just saw ran on the phone. The pose landmarks come from
+> Google's BlazePose model — the full variant, bundled in the APK, running
+> on-device through MediaPipe Tasks. No cloud, no network calls. It works in
 > airplane mode — which matters, because these users often have poor
 > connectivity, and because video of someone's body in their own home
 > shouldn't be leaving the device in the first place.
@@ -131,6 +132,30 @@ It happens. Keep, in this order:
 Drop the technical section and the roadmap. Never drop the honesty line.
 
 ---
+
+## ⚠️ Do not claim NPU inference
+
+`03-architecture.md` and the original draft of this pitch both said the model
+runs on the Snapdragon NPU. **It does not.** Verified in the bridge's source:
+
+```kotlin
+var currentDelegate: Int = DELEGATE_CPU   // PoseLandmarkerHelper.kt
+```
+
+The ThinkSys wrapper hardcodes the CPU delegate and exposes no way to change
+it from JavaScript. It supports `Delegate.GPU` internally, but selecting it
+means patching or forking the package.
+
+So say **"on-device"**, which is completely true and is what the argument
+actually rests on — no cloud, works in airplane mode, video never leaves the
+phone. Do not say NPU, or GPU, or "accelerated". A judge who asks "which
+delegate?" and gets a wrong answer costs you more than the word was ever
+worth, and `06-demo-and-pitch.md` warns exactly this about claims you cannot
+defend.
+
+If someone asks about hardware acceleration, the honest and rather good answer
+is: *"CPU today. The delegate is one line, but we didn't want to claim a
+number we hadn't measured on this device."*
 
 ## Things not to say
 
