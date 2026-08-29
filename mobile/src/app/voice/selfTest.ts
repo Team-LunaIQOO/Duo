@@ -21,7 +21,7 @@
  * one that shows up there to the list.
  */
 
-import { matchWakePhrase } from './wakePhrase';
+import { matchWakePhrase, routeWakeMatch } from './wakePhrase';
 import { parseVoiceCommand } from './commandParser';
 import {
   isOtherArmRequest,
@@ -241,6 +241,39 @@ check('"other exercise" is not an arm switch', !isOtherArmRequest('lets do anoth
 check('otherExercise flips E1 to E3', otherExercise('E1') === 'E3');
 check('otherExercise flips E3 to E1', otherExercise('E3') === 'E1');
 check('otherExercise from nothing picks E3', otherExercise(null) === 'E3');
+
+
+// ---------------------------------------------------------------------------
+console.log('\n8. Routing: every instruction must survive to be understood');
+// ---------------------------------------------------------------------------
+
+function expectRoute(transcript: string, kind: string, sentence?: string): void {
+  const route = routeWakeMatch(matchWakePhrase(transcript));
+  const ok = route.kind === kind && (sentence === undefined || (route as { sentence?: string }).sentence === sentence);
+  check(`"${transcript}" routes as ${kind}`, ok, `${route.kind} ${(route as { sentence?: string }).sentence ?? ''}`);
+}
+
+// The regression. None of these are keywords, and every one of them was
+// silently dropped before reaching the model: the wake fired and nothing
+// happened. They must all arrive as instructions.
+expectRoute('hey duo lets do curls with my weak arm', 'instruction', 'lets do curls with my weak arm');
+expectRoute('hey duo im tired can we stop', 'instruction', 'im tired can we stop');
+expectRoute('hey duo how am i doing today', 'instruction', 'how am i doing today');
+expectRoute('hey duo that is enough for now', 'instruction', 'that is enough for now');
+expectRoute('hey duo can we try something else', 'instruction', 'can we try something else');
+
+// Keyword phrasings still route the same way — one path, not two.
+expectRoute('hey duo stop', 'instruction', 'stop');
+expectRoute('hey duo pause', 'instruction', 'pause');
+
+// A bare name is not an instruction.
+expectRoute('hey duo', 'bare');
+
+// Echo keeps its own route.
+expectRoute('hey echo I need some water', 'echo', 'i need some water');
+
+// Nothing that is not a wake phrase routes anywhere.
+expectRoute('lets do some curls', 'ignore');
 
 console.log(
   failures === 0
