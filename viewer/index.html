@@ -27,6 +27,34 @@
 
   * { box-sizing: border-box; }
 
+  /* Themed scrollbar, applied globally so every scrollable panel (the
+     sidebar, the compensation log) matches the rest of the UI instead of
+     the browser's default light-gray chrome. Firefox via scrollbar-color,
+     everything else via the WebKit pseudo-elements. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) var(--panel-2);
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: var(--panel-2);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 5px;
+    border: 2px solid var(--panel-2);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
+  }
+
   html, body {
     height: 100%;
     margin: 0;
