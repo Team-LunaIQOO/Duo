@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as Speech from 'expo-speech';
-import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { OpenRouterProvider } from './openRouterProvider';
 import { PhrasebookFallbackProvider } from './fallbackProvider';
 import { useLocalGemma } from './localGemmaProvider';
 import { useSpeechRecognizer } from './useSpeechRecognizer';
 import { initialSecondVoiceState, secondVoiceReducer } from './stateMachine';
+import { cleanStutteredSpeech } from './speechCleanup';
 
 type Props = {
   enabled: boolean;
@@ -13,11 +14,11 @@ type Props = {
   phraseHints?: string[];
 };
 
-/** Bounded communication flow. Typed input is the temporary STT seam until native speech capture is added. */
+/** Bounded communication flow backed by Android speech recognition. */
 export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props) {
   const [open, setOpen] = useState(false);
-  const [autoSpeak, setAutoSpeak] = useState(false);
   const [state, dispatch] = useReducer(secondVoiceReducer, initialSecondVoiceState);
+  const requestVersion = useRef(0);
   const fallback = useMemo(() => new PhrasebookFallbackProvider(), []);
   const localGemma = useLocalGemma();
   const provider = useMemo(
@@ -31,6 +32,7 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
     if (state.phase !== 'listening') return;
     const transcript = (overrideTranscript ?? state.transcript).trim();
     if (!transcript) return;
+    const version = ++requestVersion.current;
     dispatch({ type: 'SUBMIT_TRANSCRIPT' });
     try {
       const result = await provider.reconstruct({
@@ -40,12 +42,17 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
         phraseHints,
         context: {},
       });
-      dispatch({ type: 'RESULT', transcript, candidates: result.candidates });
-      if (autoSpeak && result.candidates[0]) {
-        dispatch({ type: 'SELECT', id: result.candidates[0].id });
-        dispatch({ type: 'CONFIRM_SPEAK' });
-      }
+      if (version !== requestVersion.current) return;
+      dispatch({
+        type: 'RESULT',
+        transcript,
+        candidates: result.candidates.map((candidate) => ({
+          ...candidate,
+          text: cleanStutteredSpeech(candidate.text),
+        })),
+      });
     } catch {
+      if (version !== requestVersion.current) return;
       dispatch({ type: 'ERROR', message: 'Suggestions are unavailable. Try again or use the phrase directly.' });
     }
   };
@@ -54,13 +61,25 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
     void submit(text);
   });
 
+  const close = () => {
+    requestVersion.current += 1;
+    void speech.cancel().catch(() => undefined);
+    void Speech.stop();
+    dispatch({ type: 'CANCEL' });
+    setOpen(false);
+  };
+
+  useEffect(() => {
+    if (!enabled && open) close();
+  }, [enabled, open]);
+
   useEffect(() => {
     if (state.phase !== 'speaking') return;
     Speech.stop();
     Speech.speak(state.text, { rate: 0.95 });
   }, [state]);
 
-  if (!enabled && !open) return null;
+  if (!enabled) return null;
   if (!open) {
     return <Pressable style={styles.launch} onPress={() => { setOpen(true); dispatch({ type: 'ACTIVATE' }); }}><Text style={styles.launchText}>Second Voice</Text></Pressable>;
   }
@@ -92,32 +111,16 @@ export function SecondVoicePanel({ enabled, endpoint, phraseHints = [] }: Props)
           </Text>
         </Pressable>
         {localGemma.downloadError && <View style={styles.modelError}>
-          <Text style={styles.error}>Local model download needs Gemma license access.</Text>
-          <Text style={styles.help}>Accept Google’s Gemma terms on Hugging Face, then retry. Your token is never stored in this app.</Text>
-          <View style={styles.row}>
-            <Pressable style={styles.secondary} onPress={() => void Linking.openURL('https://huggingface.co/google/gemma-1.1-2b-it-tflite')}><Text style={styles.secondaryText}>Open license page</Text></Pressable>
-            <Pressable style={styles.secondary} onPress={() => void localGemma.downloadModel()}><Text style={styles.secondaryText}>Retry</Text></Pressable>
-          </View>
+          <Text style={styles.error}>Local model download failed.</Text>
+          <Text style={styles.help}>Check the internet connection and available device storage, then retry.</Text>
+          <Pressable style={styles.secondary} onPress={() => void localGemma.downloadModel()}><Text style={styles.secondaryText}>Retry</Text></Pressable>
         </View>}
         {localGemma.isLoaded && <Text style={styles.localReady}>Using on-device Gemma</Text>}
-        <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSpeak }} style={styles.toggle} onPress={() => setAutoSpeak((value) => !value)}><Text style={styles.secondaryText}>{autoSpeak ? '☑ Auto-speak top suggestion' : '☐ Require Speak confirmation'}</Text></Pressable>
       </>}
-      {state.phase === 'processing' && <Text style={styles.help}>Finding possible sentences…</Text>}
-      {state.phase === 'candidates' && <>
-        <Text style={styles.help}>Choose a sentence. Nothing is spoken yet.</Text>
-        {state.candidates.map((candidate) => <Pressable key={candidate.id} style={[styles.candidate, state.selectedId === candidate.id && styles.selected]} onPress={() => dispatch({ type: 'SELECT', id: candidate.id })}><Text style={styles.candidateText}>{candidate.text}</Text></Pressable>)}
-        <View style={styles.row}>
-          <Pressable style={styles.secondary} onPress={() => state.selectedId && dispatch({ type: 'EDIT', draft: state.candidates.find((candidate) => candidate.id === state.selectedId)?.text ?? '' })}><Text style={styles.secondaryText}>Edit</Text></Pressable>
-          <Pressable disabled={!state.selectedId} style={[styles.primary, !state.selectedId && styles.disabled]} onPress={() => dispatch({ type: 'CONFIRM_SPEAK' })}><Text style={styles.primaryText}>Speak</Text></Pressable>
-        </View>
-      </>}
-      {state.phase === 'editing' && <>
-        <TextInput value={state.draft} onChangeText={(text) => dispatch({ type: 'EDIT', draft: text })} style={styles.input} multiline />
-        <Pressable style={styles.primary} onPress={() => dispatch({ type: 'CONFIRM_SPEAK' })}><Text style={styles.primaryText}>Confirm and speak</Text></Pressable>
-      </>}
-      {state.phase === 'speaking' && <><Text style={styles.spoken}>{state.text}</Text><Text style={styles.help}>{autoSpeak ? 'Auto-speak is enabled for this session.' : 'Spoken after your confirmation.'}</Text></>}
+      {state.phase === 'processing' && <Text style={styles.help}>Preparing your response…</Text>}
+      {state.phase === 'speaking' && <><Text style={styles.spoken}>{state.text}</Text><Text style={styles.help}>Spoken automatically.</Text></>}
       {state.phase === 'error' && <Text style={styles.error}>{state.message}</Text>}
-      <Pressable style={styles.cancel} onPress={() => { Speech.stop(); dispatch({ type: 'CANCEL' }); setOpen(false); }}><Text style={styles.secondaryText}>Cancel</Text></Pressable>
+      <Pressable style={styles.cancel} onPress={close}><Text style={styles.secondaryText}>Cancel</Text></Pressable>
     </View>
   );
 }
@@ -128,17 +131,10 @@ const styles = StyleSheet.create({
   panel: { position: 'absolute', zIndex: 10, left: 20, right: 20, top: 20, bottom: 20, backgroundColor: '#111a25', borderRadius: 18, padding: 22, justifyContent: 'center', gap: 12 },
   title: { color: '#fff', fontSize: 24, fontWeight: '700' },
   help: { color: '#b8c2ce', fontSize: 15 },
-  input: { color: '#fff', backgroundColor: '#202c39', borderRadius: 10, padding: 14, minHeight: 52, fontSize: 17 },
   primary: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#3378c5', borderRadius: 10, padding: 14 },
   primaryText: { color: '#fff', fontWeight: '700' },
   secondary: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#2b3745', borderRadius: 10, padding: 14 },
   secondaryText: { color: '#d7e2ee', fontWeight: '600' },
-  toggle: { alignSelf: 'flex-start', paddingVertical: 8 },
-  candidate: { borderWidth: 1, borderColor: '#405063', borderRadius: 10, padding: 14 },
-  selected: { borderColor: '#54a5ff', backgroundColor: '#1a3858' },
-  candidateText: { color: '#fff', fontSize: 17 },
-  row: { flexDirection: 'row', gap: 10 },
-  disabled: { opacity: 0.45 },
   spoken: { color: '#7fe0a0', fontSize: 20, textAlign: 'center' },
   error: { color: '#ff9b8f' },
   cancel: { alignSelf: 'center', padding: 10 },

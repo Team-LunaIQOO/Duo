@@ -38,7 +38,10 @@ export function useSpeechRecognizer(onFinalTranscript: (text: string) => void) {
     }
     setPartial('');
     setListening(true);
-    await DuoSpeech.startListening('en-IN');
+    // en-IN is not preinstalled on the target iQOO and its Vivo settings skin
+    // does not expose Google's language-pack manager. en-US is bundled with
+    // the on-device recognizer and still handles Indian English adequately.
+    await DuoSpeech.startListening('en-US');
   }, []);
 
   const stop = useCallback(async () => { await DuoSpeech.stopListening(); }, []);

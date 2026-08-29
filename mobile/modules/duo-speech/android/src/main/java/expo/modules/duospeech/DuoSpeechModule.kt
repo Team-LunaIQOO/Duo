@@ -26,12 +26,14 @@ class DuoSpeechModule : Module() {
       }
       mainHandler.post {
         recognizer?.cancel()
+        recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(context).also { speech ->
           speech.setRecognitionListener(listener)
           val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag ?: Locale.getDefault().toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
           }
           speech.startListening(intent)
@@ -83,6 +85,8 @@ class DuoSpeechModule : Module() {
     SpeechRecognizer.ERROR_CLIENT -> "Speech client error"
     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission denied"
     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service network error"
+    SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "This speech language is not supported on this device"
+    SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "The selected speech language is unavailable"
     SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer is busy"
     SpeechRecognizer.ERROR_SERVER -> "Speech service error"
