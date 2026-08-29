@@ -81,7 +81,11 @@ address `relay.js` prints, and make sure both devices are on the same network.
 ## Second Voice (optional)
 
 A communication aid for aphasia: it reconstructs the user's intended sentence
-from a rough transcript and asks them to approve it before speaking. Lives in
+from a rough transcript and asks them to approve it before speaking. There is
+now an **opt-in auto-speak toggle** that skips that approval and speaks the top
+suggestion directly — off by default, and per session. Be careful describing
+this one: with auto-speak on, the phone says a sentence the user has not
+confirmed, reconstructed by a model. Off is the default for a reason. Lives in
 `mobile/src/app/secondVoice/`, and is gated to `phase !== 'active'` so it never
 runs during an exercise session.
 
