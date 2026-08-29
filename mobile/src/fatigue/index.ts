@@ -24,4 +24,6 @@ export type { FatigueThresholds } from './thresholds';
 export { trackedAngleFor } from './trackedAngle';
 export type { TrackedAngleFn, TrackedExercise, WorkingSide } from './trackedAngle';
 
-export { angleBetween, distance, midpoint, shoulderWidth, LM } from './geometry';
+// Geometry helpers are Person A's, in src/vision/geometry.ts — import them
+// from there. This module used to carry a temporary local copy; it was
+// deleted at integration once the two were confirmed identical.

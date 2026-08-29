@@ -16,7 +16,7 @@
  */
 
 import type { Landmark, PoseFrame, RepEvent } from '../../types/contracts';
-import { LM } from '../geometry';
+import { LandmarkIndex as LM } from '../../vision/landmarks';
 import type { WorkingSide } from '../trackedAngle';
 
 export type MockOptions = {

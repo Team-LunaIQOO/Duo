@@ -9,7 +9,12 @@
  */
 
 import type { Landmark, PoseFrame } from '../types/contracts';
-import { LM, angleBetween } from './geometry';
+// Person A owns the shared geometry helpers (05-build-plan.md). Imported from
+// the leaf files rather than '../vision', because vision/index.ts re-exports
+// mediapipeAdapter, which pulls in the native module and would break the
+// Node-runnable self-tests.
+import { angleBetween } from '../vision/geometry';
+import { LandmarkIndex as LM } from '../vision/landmarks';
 
 /** The exercises defined in 04-clinical-logic.md. */
 export type TrackedExercise = 'E1' | 'E2' | 'E3';
