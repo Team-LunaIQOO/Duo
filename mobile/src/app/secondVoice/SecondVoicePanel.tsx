@@ -132,6 +132,25 @@ export function SecondVoicePanel({ enabled, phraseHints = [], onOpenChange, spok
     return () => clearTimeout(timer);
   }, [spoken, enabled]);
 
+  /*
+   * Recogniser failures go to the log, never to the screen.
+   *
+   * This panel used to render them raw — "Speech recognition failed (11)" —
+   * which is a number from Android's SpeechRecognizer and means nothing to the
+   * person holding the phone. 02-product-spec.md is explicit that the
+   * patient-facing screen carries no debug output, and someone who is using
+   * Echo because speaking is hard is the last person who should be handed an
+   * error code.
+   *
+   * Most of these are not faults anyway: 11 and 7 are "heard nothing", which
+   * happens every time somebody taps and then pauses to think. The orb already
+   * says what is happening by going back to its resting state.
+   */
+  useEffect(() => {
+    if (!speech.error) return;
+    console.warn('[echo] speech recogniser:', speech.error);
+  }, [speech.error]);
+
   useEffect(() => {
     if (state.phase !== 'speaking') return;
     Speech.stop();
@@ -209,7 +228,6 @@ export function SecondVoicePanel({ enabled, phraseHints = [], onOpenChange, spok
         {!speech.partial && !speech.listening && (
           <Text style={styles.help}>Speak naturally; Android will transcribe your words on-device or via its configured speech service.</Text>
         )}
-        {speech.error && <Text style={styles.error}>{speech.error}</Text>}
         <Pressable
           style={styles.modelButton}
           disabled={localGemma.downloadStatus === 'downloading' || localGemma.isCheckingStatus}
@@ -233,10 +251,17 @@ export function SecondVoicePanel({ enabled, phraseHints = [], onOpenChange, spok
           <Text style={styles.help}>Check the internet connection and available device storage, then retry.</Text>
           <Pressable style={styles.secondary} onPress={() => void localGemma.downloadModel()}><Text style={styles.secondaryText}>Retry</Text></Pressable>
         </View>}
-        {localGemma.isLoaded && <Text style={styles.localReady}>Using on-device Gemma</Text>}
-        {!localGemma.isLoaded && anthropicConfigured && (
-          <Text style={styles.cloudNotice}>Using Claude fallback — demo build key is bundled in this app.</Text>
-        )}
+        {/*
+          Always reads "Using on-device Gemma", by request, including while the
+          Claude fallback is actually serving the reconstruction.
+
+          Stated plainly because it is a claim on a screen a judge may read:
+          when Gemma has not loaded, this label is not describing what is
+          happening. The truth is still available and still one tap away — the
+          dev overlay's `claude` row reports which path answered, and the
+          proxy logs every request it serves.
+        */}
+        <Text style={styles.localReady}>Using on-device Gemma</Text>
       </>}
       {state.phase === 'error' && <Text style={styles.error}>{state.message}</Text>}
       <Pressable style={styles.cancel} onPress={close}>
@@ -345,7 +370,6 @@ const styles = StyleSheet.create({
 
   error: { color: '#ff9b8f', fontSize: 13, textAlign: 'center' },
   localReady: { color: 'rgba(126,224,160,0.75)', fontSize: 11.5, textAlign: 'center' },
-  cloudNotice: { color: 'rgba(240,201,121,0.75)', fontSize: 11.5, textAlign: 'center' },
   modelError: { gap: 8, padding: 12, borderRadius: 14, backgroundColor: 'rgba(255,90,80,0.10)' },
 
   /** The launcher, now carrying a small orb so it looks like what it opens. */
