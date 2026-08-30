@@ -226,6 +226,13 @@ export function useSpeechCommands({
    * that genuinely saying the name twice still works.
    */
   const lastWakeAt = useRef(0);
+  /**
+   * The most recent non-empty partial, held until a final arrives.
+   *
+   * This recogniser's finals are empty; the words live in the partials. See
+   * the note in the result handler.
+   */
+  const lastPartialRef = useRef<string[]>([]);
   const errorCountRef = useRef(0);
   /**
    * Which kind of session is open, so the keep-alive effect below can tell its
@@ -401,6 +408,8 @@ export function useSpeechCommands({
 
   useSpeechRecognitionEvent('end', () => {
     sessionKindRef.current = null;
+    // Whatever was half-heard when the session ended is not an instruction.
+    lastPartialRef.current = [];
     setListening(false);
   });
 
@@ -430,8 +439,35 @@ export function useSpeechCommands({
   });
 
   useSpeechRecognitionEvent('result', (event) => {
-    const transcripts = event.results.map((r) => r.transcript).filter(Boolean);
-    if (transcripts.length === 0) return;
+    let transcripts = event.results.map((r) => r.transcript).filter(Boolean);
+
+    /*
+     * Carry the last partial forward into an empty final.
+     *
+     * On this device the on-device recogniser puts its words in PARTIAL
+     * results and then delivers a final with nothing in it — Android's own log
+     * says "onResults empty final recognition results" after every utterance.
+     *
+     * Two correct-looking rules collided here. Acting only on finals is right:
+     * a half-heard sentence is easily a different sentence, and executing one
+     * mid-utterance could end a session the user was in the middle of. But
+     * with finals arriving empty, that rule discarded every word ever spoken
+     * to the app, and the symptom was simply that nothing happened.
+     *
+     * Buffering the last partial satisfies both. Actions still fire only when
+     * Android says the utterance is over, so nothing acts early — the final
+     * just no longer has to carry the text itself.
+     */
+    if (!event.isFinal && transcripts.length > 0) {
+      lastPartialRef.current = transcripts;
+    }
+
+    if (transcripts.length === 0) {
+      if (!event.isFinal || lastPartialRef.current.length === 0) return;
+      transcripts = lastPartialRef.current;
+    }
+
+    if (event.isFinal) lastPartialRef.current = [];
 
     /*
      * Barge-in is deliberately wake-gated. Android may transcribe audio coming
