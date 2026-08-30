@@ -1,7 +1,7 @@
 import type { CompensationEvent, PoseFrame, RepEvent } from '../types/contracts';
 import { CompensationDetector } from './compensationDetector';
 import type { CalibrationBaseline } from './calibration';
-import { RepCounter } from './repCounter';
+import { RepCounter, type Exercise } from './repCounter';
 
 export type VisionOutput = {
   frame: PoseFrame;
@@ -20,7 +20,7 @@ export class PosePipeline {
 
   constructor(options: {
     baseline?: CalibrationBaseline;
-    exercise: 'shoulder_abduction' | 'elbow_flexion';
+    exercise: Exercise;
     workingSide: 'left' | 'right';
     repSide?: RepEvent['side'];
   }) {

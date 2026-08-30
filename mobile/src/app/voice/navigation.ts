@@ -38,11 +38,34 @@ export type ExerciseRequest = {
 /**
  * Spoken names for each exercise, including the ones people actually use
  * rather than the clinical ones. E1 is shoulder abduction; nobody says that.
+ *
+ * Order matters: this is a first-match list, so a narrower vocabulary must
+ * come before a broader one it could be confused with. E4 (elbow extension)
+ * has to precede E3 (elbow flexion) — both mention "elbow" — or "elbow
+ * extension" would always match E3 first. Same reasoning put E6 (wrist
+ * flexion) before nothing else here shares its words, but it stays close to
+ * E3/E4 since all three are forearm-adjacent vocabulary a person could run
+ * together.
  */
 const EXERCISE_WORDS: [ExerciseId, string[]][] = [
-  // Elbow flexion first: "bicep curl" contains "curl", and checking the more
+  // Elbow extension before elbow flexion: "straighten"/"extend"/"push" name
+  // the opposite half of the same joint motion E3 tracks.
+  ['E4', [
+    'elbow extension', 'extend my elbow', 'extend the elbow', 'straighten my arm',
+    'straighten my elbow', 'straighten the elbow', 'push my arm', 'push exercise',
+    'elbow straighten', 'elbow push',
+  ]],
+  // Elbow flexion next: "bicep curl" contains "curl", and checking the more
   // specific vocabulary first keeps a phrase like "arm curl" off E1.
   ['E3', ['bicep', 'biceps', 'curl', 'curls', 'elbow', 'elbow flexion', 'elbow bend']],
+  ['E6', [
+    'wrist', 'wrist flexion', 'wrist bend', 'wrist curl', 'bend my wrist',
+    'flex my wrist', 'wrist exercise',
+  ]],
+  ['E5', [
+    'horizontal adduction', 'across my body', 'across the body', 'sweep my arm',
+    'arm across', 'reach across', 'cross body reach',
+  ]],
   ['E1', [
     'shoulder', 'shoulder raise', 'shoulder raises', 'abduction', 'arm raise',
     'arm raises', 'raise my arm', 'lift my arm', 'side raise', 'lateral raise',
@@ -144,12 +167,30 @@ export function isFallAlertCancelRequest(heard: string): boolean {
   return /^(?:okay|ok|i am (?:okay|ok)|im (?:okay|ok)|cancel (?:the )?alert|do not send (?:the )?alert)$/.test(text);
 }
 
-/** The exercise that is not this one. Two exercises, so this is a flip. */
+/**
+ * Fixed cycle order for "let's do another exercise". E1 first, since that was
+ * the two-exercise default before E4-E6 existed and is still the natural
+ * starting point voice navigation lands on from nothing.
+ */
+const EXERCISE_CYCLE: ExerciseId[] = ['E1', 'E3', 'E4', 'E5', 'E6'];
+
+/** The next exercise in the fixed cycle. Wraps from the last back to the first. */
 export function otherExercise(current: ExerciseId | null): ExerciseId {
-  return current === 'E3' ? 'E1' : 'E3';
+  if (current === null) return EXERCISE_CYCLE[0];
+  const index = EXERCISE_CYCLE.indexOf(current);
+  if (index === -1) return EXERCISE_CYCLE[0];
+  return EXERCISE_CYCLE[(index + 1) % EXERCISE_CYCLE.length];
 }
+
+const EXERCISE_NAMES: Record<string, string> = {
+  E1: 'shoulder raises',
+  E3: 'elbow curls',
+  E4: 'elbow extensions',
+  E5: 'across-the-body reaches',
+  E6: 'wrist bends',
+};
 
 /** Spoken name, for confirming out loud what is about to start. */
 export function exerciseName(exercise: ExerciseId): string {
-  return exercise === 'E3' ? 'elbow curls' : 'shoulder raises';
+  return EXERCISE_NAMES[exercise] ?? 'shoulder raises';
 }

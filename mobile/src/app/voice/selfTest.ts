@@ -239,6 +239,15 @@ expectExercise('left shoulder raise', 'E1', 'left');
 expectExercise('lets do arm raises', 'E1', null);
 expectExercise('bicep curls', 'E3', null);
 
+// E4 must win over E3 despite both mentioning "elbow" — this is the ordering
+// navigation.ts's EXERCISE_WORDS comment documents.
+expectExercise('elbow extension on my left', 'E4', 'left');
+expectExercise('lets straighten my elbow', 'E4', null);
+expectExercise('right wrist bend', 'E6', 'right');
+expectExercise('bend my wrist on the left', 'E6', 'left');
+expectExercise('reach across my body with my right arm', 'E5', 'right');
+expectExercise('lets do some across the body reaches', 'E5', null);
+
 check('unrelated speech names no exercise', parseExerciseRequest('what time is it') === null);
 check('an empty string names no exercise', parseExerciseRequest('') === null);
 
@@ -251,9 +260,14 @@ check('"now the other arm" switches arms', isOtherArmRequest('now the other arm'
 check('"switch arms" switches arms', isOtherArmRequest('switch arms'));
 check('"other exercise" is not an arm switch', !isOtherArmRequest('lets do another exercise'));
 
-check('otherExercise flips E1 to E3', otherExercise('E1') === 'E3');
-check('otherExercise flips E3 to E1', otherExercise('E3') === 'E1');
-check('otherExercise from nothing picks E3', otherExercise(null) === 'E3');
+// Fixed cycle: E1 -> E3 -> E4 -> E5 -> E6 -> E1, matching
+// navigation.ts's EXERCISE_CYCLE. Five exercises now, not a two-way flip.
+check('otherExercise moves E1 to E3', otherExercise('E1') === 'E3');
+check('otherExercise moves E3 to E4', otherExercise('E3') === 'E4');
+check('otherExercise moves E4 to E5', otherExercise('E4') === 'E5');
+check('otherExercise moves E5 to E6', otherExercise('E5') === 'E6');
+check('otherExercise wraps E6 back to E1', otherExercise('E6') === 'E1');
+check('otherExercise from nothing picks E1', otherExercise(null) === 'E1');
 
 
 // ---------------------------------------------------------------------------

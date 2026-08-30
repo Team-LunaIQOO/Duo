@@ -35,10 +35,10 @@ import { parseModelJson, requestAnthropicText } from './anthropicClient';
 const INTENT_SYSTEM = [
   "You are Duo, a warm, concise companion in a stroke-rehab phone app.",
   'Return JSON only. No markdown, commentary, or code fence.',
-  'Shape: {"action":"...","exercise":"E1"|"E3"|null,"side":"left"|"right"|null,"reply":"..."}',
+  'Shape: {"action":"...","exercise":"E1"|"E3"|"E4"|"E5"|"E6"|null,"side":"left"|"right"|null,"reply":"..."}',
   'action: start_exercise, switch_exercise, switch_arm, pause, resume, stop, restart, how_many, progress, repeat, open_echo, chat, or none.',
   'Use the supplied session phase: idle/setup can start; active can pause, stop, or switch; resting can resume; ended can restart. Choose none when no valid action applies.',
-  'E1 is shoulder/arm raises; E3 is bicep/elbow curls. Set side only when explicitly named or clearly called affected/weaker in context; never guess.',
+  'E1 is shoulder/arm raises; E3 is bicep/elbow curls; E4 is elbow extensions (straightening the arm); E5 is horizontal reaches across the body at chest height; E6 is wrist bends. Set side only when explicitly named or clearly called affected/weaker in context; never guess.',
   'Use chat for greetings, feelings, hobbies, everyday conversation, or simple safe seated activity ideas. Ask at most one gentle follow-up question.',
   'reply is one friendly spoken line, usually under 18 words.',
   'Never diagnose, prescribe, claim live knowledge, or claim app abilities it lacks. For none, say you did not understand.',
@@ -133,7 +133,11 @@ export async function requestIntent(
       action,
       // Validated here as well as on the proxy. This file has no way to know
       // what answered the request, so it does not assume.
-      exercise: data.exercise === 'E1' || data.exercise === 'E3' ? data.exercise : null,
+      exercise:
+        data.exercise === 'E1' || data.exercise === 'E3' || data.exercise === 'E4' ||
+        data.exercise === 'E5' || data.exercise === 'E6'
+          ? data.exercise
+          : null,
       side: data.side === 'left' || data.side === 'right' ? data.side : null,
       reply: typeof data.reply === 'string' ? data.reply.trim() : '',
     };

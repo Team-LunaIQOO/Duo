@@ -26,6 +26,7 @@ import type {
 import { calculateBaseline, type CalibrationBaseline } from '../../vision/calibration';
 import { LandmarkIndex } from '../../vision/landmarks';
 import { PosePipeline } from '../../vision/posePipeline';
+import type { Exercise } from '../../vision/repCounter';
 
 /** How long to sit still before counting starts. 04-clinical-logic.md: two seconds. */
 export const CALIBRATION_MS = 2000;
@@ -67,8 +68,14 @@ export type VisionStatus = {
 };
 
 /** Person B's ExerciseId literals map onto Person A's pipeline exercise names. */
-function toPipelineExercise(exercise: ExerciseId | null): 'shoulder_abduction' | 'elbow_flexion' {
-  return exercise === 'E3' ? 'elbow_flexion' : 'shoulder_abduction';
+function toPipelineExercise(exercise: ExerciseId | null): Exercise {
+  switch (exercise) {
+    case 'E3': return 'elbow_flexion';
+    case 'E4': return 'elbow_extension';
+    case 'E5': return 'horizontal_adduction';
+    case 'E6': return 'wrist_flexion';
+    default: return 'shoulder_abduction';
+  }
 }
 
 /**
@@ -93,8 +100,17 @@ function requiredLandmarks(exercise: ExerciseId | null, side: 'left' | 'right'):
     left ? LandmarkIndex.leftShoulder : LandmarkIndex.rightShoulder,
     left ? LandmarkIndex.leftElbow : LandmarkIndex.rightElbow,
   ];
-  // Elbow flexion tracks shoulder-elbow-wrist, so the wrist is load bearing.
-  if (exercise === 'E3') arm.push(left ? LandmarkIndex.leftWrist : LandmarkIndex.rightWrist);
+  const wrist = left ? LandmarkIndex.leftWrist : LandmarkIndex.rightWrist;
+  // Elbow flexion/extension track shoulder-elbow-wrist, and horizontal
+  // adduction tracks shoulder-to-wrist distance directly, so the wrist is
+  // load bearing for all three. Wrist flexion needs the wrist too, plus the
+  // (unvalidated, see landmarks.ts) index-finger point.
+  if (exercise === 'E3' || exercise === 'E4' || exercise === 'E5' || exercise === 'E6') {
+    arm.push(wrist);
+  }
+  if (exercise === 'E6') {
+    arm.push(left ? LandmarkIndex.leftIndex : LandmarkIndex.rightIndex);
+  }
 
   return [
     LandmarkIndex.leftShoulder,

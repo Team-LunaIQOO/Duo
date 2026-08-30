@@ -12,6 +12,17 @@ export const LandmarkIndex = {
   rightWrist: 16,
   leftHip: 23,
   rightHip: 24,
+  /**
+   * BlazePose's hand-adjacent points, present in the raw 33-point array but
+   * unused by any exercise until E6 (wrist flexion). 04-clinical-logic.md
+   * only documents landmarks 0-24 and warns that front-camera 2D pose is
+   * weak at depth; these are lower-confidence still, since they are near the
+   * edge of what the body-pose model resolves rather than a tracked hand
+   * joint. E6 is marked experimental for exactly this reason — verify on
+   * the loaner device before trusting it in a demo.
+   */
+  leftIndex: 19,
+  rightIndex: 20,
 } as const;
 
 type RawLandmark = {

@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Face } from '../face/Face';
 import type { ExerciseId, SessionState } from '../../types/contracts';
 import { CONTROL_LINES } from '../feedback/feedbackTable';
@@ -15,6 +15,13 @@ type Props = {
 const EXERCISES: { id: ExerciseId; label: string }[] = [
   { id: 'E1', label: 'Shoulder raise' },
   { id: 'E3', label: 'Elbow curl' },
+  { id: 'E4', label: 'Elbow extension' },
+  { id: 'E5', label: 'Reach across body' },
+  // Experimental — see repCounter.ts's wrist_flexion note. Left in the touch
+  // list because touch must reach every exercise voice can reach
+  // (02-product-spec.md), and it is the reliable route to try it deliberately
+  // rather than only stumbling into it by voice.
+  { id: 'E6', label: 'Wrist bend' },
 ];
 
 /**
@@ -44,31 +51,43 @@ export function SetupScreen({ framed, onChooseExercise, faceState, gaze }: Props
             Sit so your head, shoulders and hips are all in view.
           </Text>
         )}
-        {EXERCISES.map((exercise) => (
-          <View key={exercise.id} style={styles.exerciseRow}>
-            <Text style={styles.exerciseLabel}>{exercise.label}</Text>
-            <View style={styles.sideButtons}>
-              <Pressable
-                style={[styles.sideButton, !framed && styles.sideButtonDisabled]}
-                onPress={() => onChooseExercise(exercise.id, 'left')}
-                disabled={!framed}
-              >
-                <Text style={[styles.sideButtonText, !framed && styles.sideButtonTextDisabled]}>
-                  Left
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[styles.sideButton, !framed && styles.sideButtonDisabled]}
-                onPress={() => onChooseExercise(exercise.id, 'right')}
-                disabled={!framed}
-              >
-                <Text style={[styles.sideButtonText, !framed && styles.sideButtonTextDisabled]}>
-                  Right
-                </Text>
-              </Pressable>
+        {/*
+          Five exercises' worth of rows no longer fits this column at a fixed
+          height the way two did — scrollable rather than shrinking each row,
+          since a cramped touch target is the wrong trade on a screen this
+          app's users may already find hard to aim at.
+        */}
+        <ScrollView
+          style={styles.exerciseList}
+          contentContainerStyle={styles.exerciseListContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {EXERCISES.map((exercise) => (
+            <View key={exercise.id} style={styles.exerciseRow}>
+              <Text style={styles.exerciseLabel}>{exercise.label}</Text>
+              <View style={styles.sideButtons}>
+                <Pressable
+                  style={[styles.sideButton, !framed && styles.sideButtonDisabled]}
+                  onPress={() => onChooseExercise(exercise.id, 'left')}
+                  disabled={!framed}
+                >
+                  <Text style={[styles.sideButtonText, !framed && styles.sideButtonTextDisabled]}>
+                    Left
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.sideButton, !framed && styles.sideButtonDisabled]}
+                  onPress={() => onChooseExercise(exercise.id, 'right')}
+                  disabled={!framed}
+                >
+                  <Text style={[styles.sideButtonText, !framed && styles.sideButtonTextDisabled]}>
+                    Right
+                  </Text>
+                </Pressable>
+              </View>
             </View>
-          </View>
-        ))}
+          ))}
+        </ScrollView>
       </View>
     </View>
   );
@@ -96,14 +115,20 @@ const styles = StyleSheet.create({
   right: {
     flex: 1,
     justifyContent: 'center',
-    gap: 20,
     paddingRight: 32,
   },
   prompt: {
     color: '#fff',
     fontSize: 18,
     fontWeight: '600',
-    marginBottom: 8,
+    marginBottom: 16,
+  },
+  exerciseList: {
+    flexGrow: 0,
+  },
+  exerciseListContent: {
+    gap: 20,
+    paddingVertical: 4,
   },
   exerciseRow: {
     gap: 8,

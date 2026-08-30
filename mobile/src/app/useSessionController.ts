@@ -308,7 +308,11 @@ export function useSessionController(onSimulateFall?: () => void) {
   useEffect(() => {
     fatigueRef.current = new FatigueDetector({
       workingSide: session.affectedSide ?? 'left',
-      exercise: session.exercise === 'E3' ? 'E3' : 'E1',
+      exercise:
+        session.exercise === 'E3' || session.exercise === 'E4' ||
+        session.exercise === 'E5' || session.exercise === 'E6'
+          ? session.exercise
+          : 'E1',
       // Only the affected arm's reps feed fatigue. Pooling both would compare
       // a fresh arm against a tired one and read as recovery, and the affected
       // side is the one whose tiring actually matters clinically.
@@ -832,10 +836,26 @@ export function useSessionController(onSimulateFall?: () => void) {
    * The model decides what it meant; the keyword parser is the failsafe when
    * the model cannot be reached or did not understand. Asynchronous, and
    * nothing waits on it — a slow answer delays an action, never a rep.
+   *
+   * "stop" and "pause" are the one exception: they act before Claude is ever
+   * asked. INTENT_TIMEOUT_MS is 6 seconds, and 02-product-spec.md's rule that
+   * touch must never fail applies just as much to the words a person uses
+   * when they need the session to stop right now. Waiting on a reply that
+   * might reclassify "stop" as something else, or return true without the
+   * phase guard actually doing anything (see executeIntent's pause/stop
+   * cases), is not an acceptable trade for these two words specifically.
    */
   const handleHeardSpeech = useCallback(
     (heard: string) => {
       if (!heard.trim()) return;
+
+      const urgentCommand = parseVoiceCommand(heard);
+      if (urgentCommand === 'stop' || urgentCommand === 'pause') {
+        if (handleLocally(heard)) {
+          setReplySource('local');
+          return;
+        }
+      }
 
       void (async () => {
         const intent = await requestIntent(heard, contextRef.current);
