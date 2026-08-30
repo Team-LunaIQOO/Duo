@@ -20,6 +20,7 @@ import { generateTemplateSummary } from './summary/generateSummary';
 import { parseVoiceCommand } from './voice/commandParser';
 import {
   exerciseName,
+  isOpenEchoRequest,
   isOtherArmRequest,
   isSwitchExerciseRequest,
   otherExercise,
@@ -85,6 +86,8 @@ export function useSessionController() {
 
   /** Whether the last spoken line came from Claude or the local table. */
   const [replySource, setReplySource] = useState<'claude' | 'local'>('local');
+  /** Each Claude chat reply grants one wake-free follow-up turn. */
+  const [conversationTurn, setConversationTurn] = useState(0);
 
   /**
    * Whether to encode camera JPEGs for the camera relay.
@@ -730,6 +733,12 @@ export function useSessionController() {
           onEchoRequestRef.current?.();
           speakIntentReply();
           return true;
+        case 'chat': {
+          const line = intent.reply || "I'm here. What would you like to talk about?";
+          setSession((s) => machine.acknowledge(machine.speak(s, line)));
+          setConversationTurn((turn) => turn + 1);
+          return true;
+        }
         case 'repeat':
           setSession((s) => (s.lastSpoken ? machine.acknowledge(s) : s));
           return true;
@@ -760,6 +769,15 @@ export function useSessionController() {
   const handleLocally = useCallback(
     (heard: string) => {
       const phase = phaseRef.current;
+
+      // Opening the communication aid is an accessibility action, so it must
+      // remain instant and available when Claude is offline. The same handler
+      // backs the one-word "Echo" route in useSpeechCommands.
+      if (isOpenEchoRequest(heard)) {
+        logEvent(`VOICE local "${heard}" -> open echo`);
+        onEchoRequestRef.current?.();
+        return true;
+      }
 
       if (isSwitchExerciseRequest(heard)) {
         logEvent(`VOICE local "${heard}" -> switch exercise`);
@@ -892,6 +910,7 @@ export function useSessionController() {
     isCameraStreaming,
     setCameraStreaming,
     cameraState: () => cameraPublisher.state,
+    conversationTurn,
     setEchoRequestHandler,
     fatigueDebug: () => fatigueRef.current?.debug ?? null,
     gestureDebug: (): GestureDebug | null => gestureRef.current?.debug ?? null,

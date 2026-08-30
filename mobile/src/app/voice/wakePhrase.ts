@@ -154,10 +154,15 @@ export type WakeRoute =
   | { kind: 'echo'; sentence: string }
   | { kind: 'instruction'; sentence: string }
   | { kind: 'bare' }
+  | { kind: 'defer' }
   | { kind: 'ignore' };
 
-export function routeWakeMatch(match: WakeMatch): WakeRoute {
+export function routeWakeMatch(match: WakeMatch, isFinal = true): WakeRoute {
   if (!match.matched) return { kind: 'ignore' };
+  // A partial can be only the prefix of a longer utterance. Speaking for a
+  // partial bare wake, or opening Echo for a partial sentence, mutes and
+  // aborts recognition before the user's final words arrive.
+  if (!isFinal) return { kind: 'defer' };
   if (match.target === 'echo') return { kind: 'echo', sentence: match.remainder };
   // Any remainder is an instruction. Whether it MEANS anything is decided
   // downstream, never here.

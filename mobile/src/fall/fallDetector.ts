@@ -41,6 +41,7 @@ function torso(frame: PoseFrame): Torso | null {
  * medical or emergency-grade detector. Missing landmarks alone never fire.
  */
 export class FallDetector {
+  private enabled = true;
   private baselineY: number | null = null;
   private baselineSamples: number[] = [];
   private history: Sample[] = [];
@@ -58,7 +59,18 @@ export class FallDetector {
     this.recoveredSince = null;
   }
 
-  update(frame: PoseFrame): FallEvent | null {
+  setEnabled(enabled: boolean): void {
+    if (enabled === this.enabled) return;
+    this.enabled = enabled;
+    // A baseline learned in idle, another exercise, or a paused session is
+    // not valid evidence for the next monitored curl session.
+    this.reset();
+  }
+
+  update(frame: PoseFrame, enabled = this.enabled): FallEvent | null {
+    this.setEnabled(enabled);
+    if (!this.enabled) return null;
+
     const current = torso(frame);
     const now = frame.timestamp;
 

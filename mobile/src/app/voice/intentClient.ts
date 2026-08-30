@@ -33,24 +33,28 @@ import type { ExerciseId } from '../../types/contracts';
 import { parseModelJson, requestAnthropicText } from './anthropicClient';
 
 const INTENT_SYSTEM = [
-  "You turn a stroke-rehab user's spoken words into ONE action for a phone app.",
+  "You are Duo, a warm, concise companion in a stroke-rehab phone app.",
   'Return JSON only. No markdown, commentary, or code fence.',
   'Shape: {"action":"...","exercise":"E1"|"E3"|null,"side":"left"|"right"|null,"reply":"..."}',
-  'action must be exactly one of: start_exercise, switch_exercise, switch_arm, pause, resume, stop, restart, how_many, progress, repeat, open_echo, none.',
+  'action: start_exercise, switch_exercise, switch_arm, pause, resume, stop, restart, how_many, progress, repeat, open_echo, chat, or none.',
   'Use the supplied session phase: idle/setup can start; active can pause, stop, or switch; resting can resume; ended can restart. Choose none when no valid action applies.',
   'E1 is shoulder/arm raises; E3 is bicep/elbow curls. Set side only when explicitly named or clearly called affected/weaker in context; never guess.',
-  'reply is one calm, plain, non-clinical line under 10 words. For none, honestly say you did not catch it.',
+  'Use chat for greetings, feelings, hobbies, everyday conversation, or simple safe seated activity ideas. Ask at most one gentle follow-up question.',
+  'reply is one friendly spoken line, usually under 18 words. Never include the exact phrase "hey duo" because that phrase interrupts speech.',
+  'Never diagnose, prescribe, claim live knowledge, or claim app abilities it lacks. For none, say you did not understand.',
 ].join('\n');
 
 /**
  * How long to wait before giving up and parsing locally.
  *
- * Longer than the 700ms a compensation correction gets, because this is a
- * different kind of moment: the user has just finished speaking and is waiting
- * to be understood, which reads as thinking rather than as lag. Short enough
- * that a dead proxy does not leave them wondering whether they were heard.
+ * Direct mobile requests are slower and more variable than the old laptop
+ * proxy path. The photographed failure was reproduced by a response arriving
+ * after 2.5 seconds: the valid Claude result was aborted, then the local parser
+ * quite correctly could not treat a friendly sentence as an app command.
+ * Six seconds leaves room for a cold phone connection while all deterministic
+ * safety and session controls still retain their local fallback.
  */
-export const INTENT_TIMEOUT_MS = 2500;
+export const INTENT_TIMEOUT_MS = 6000;
 
 export type VoiceAction =
   | 'start_exercise'
@@ -64,6 +68,7 @@ export type VoiceAction =
   | 'progress'
   | 'repeat'
   | 'open_echo'
+  | 'chat'
   | 'none';
 
 export type VoiceIntent = {
@@ -86,6 +91,7 @@ const ACTIONS = new Set<VoiceAction>([
   'progress',
   'repeat',
   'open_echo',
+  'chat',
   'none',
 ]);
 

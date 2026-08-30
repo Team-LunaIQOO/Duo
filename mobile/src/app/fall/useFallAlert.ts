@@ -11,11 +11,13 @@ export type FallAlertState =
   | { status: 'sent'; event: FallEvent }
   | { status: 'failed'; event: FallEvent; message: string };
 
-export function useFallAlert(endpoint: string | undefined) {
+export function useFallAlert(endpoint: string | undefined, enabled: boolean) {
   const detector = useRef(new FallDetector());
   const deadline = useRef<number | null>(null);
   const stateRef = useRef<FallAlertState>({ status: 'idle' });
   const [state, setStateValue] = useState<FallAlertState>({ status: 'idle' });
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   const setState = useCallback((next: FallAlertState) => {
     stateRef.current = next;
@@ -50,11 +52,22 @@ export function useFallAlert(endpoint: string | undefined) {
 
   const handlePoseFrame = useCallback((frame: PoseFrame) => {
     if (stateRef.current.status !== 'idle') return;
-    const event = detector.current.update(frame);
+    const event = detector.current.update(frame, enabledRef.current);
     if (!event) return;
     deadline.current = Date.now() + COUNTDOWN_SECONDS * 1000;
     setState({ status: 'countdown', secondsRemaining: COUNTDOWN_SECONDS, event });
   }, [setState]);
+
+  useEffect(() => {
+    detector.current.setEnabled(enabled);
+    if (enabled) return;
+
+    // Leaving the active curl session immediately disarms both detection and
+    // any countdown it started. Pausing, switching exercise, or ending the
+    // session must not leave an alert covering an unrelated screen.
+    deadline.current = null;
+    if (stateRef.current.status !== 'idle') setState({ status: 'idle' });
+  }, [enabled, setState]);
 
   useEffect(() => {
     if (state.status !== 'countdown') return;

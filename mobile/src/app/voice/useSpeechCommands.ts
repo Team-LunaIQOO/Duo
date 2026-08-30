@@ -29,14 +29,14 @@
  * never leaves the phone, so "the exercise session works in airplane mode"
  * survives having a wake phrase.
  *
- * ## Duo must not hear itself
+ * ## Duo must not obey itself
  *
- * Recognition is suspended while the app is speaking. This is not a nicety:
- * one of Duo's own lines is "Paused. Tap or say start when ready", which
- * contains the word start. Left listening, Duo would pause the session, say
- * that sentence, hear itself, and resume — a loop that would look like the
- * app ignoring the user. The voice self-test also checks that no spoken line
- * contains the wake phrase, as a standing guard on future feedback lines.
+ * While main TTS is speaking, recognition accepts only the wake phrase. That
+ * allows a user to say "hey duo" to interrupt a long answer, but prevents a
+ * spoken line such as "Tap or say start when ready" from executing its own
+ * command. Fall-alert and Echo speech still mute recognition completely.
+ * The voice self-test also checks that no fixed spoken line contains the wake
+ * phrase, as a standing guard on future feedback lines.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -46,7 +46,8 @@ import {
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import { parseVoiceCommand } from './commandParser';
-import { matchWakePhrase } from './wakePhrase';
+import { isFallAlertCancelRequest, isOpenEchoRequest } from './navigation';
+import { matchWakePhrase, routeWakeMatch } from './wakePhrase';
 
 /**
  * Words worth biasing the recogniser toward: the tokens commandParser.ts
@@ -58,6 +59,7 @@ const COMMAND_HINTS = [
   'hey duo',
   'duo',
   'hey echo',
+  'open echo',
   'echo',
   'start',
   'begin',
@@ -79,6 +81,13 @@ const COMMAND_HINTS = [
  * taken as an instruction.
  */
 const ARMED_WINDOW_MS = 8_000;
+
+/**
+ * A longer window after a Claude chat reply. It renews after every turn, so a
+ * conversation feels continuously interactive without making unrelated room
+ * speech actionable for the entire lifetime of the app.
+ */
+const CONVERSATION_WINDOW_MS = 30_000;
 
 /**
  * Delay before restarting a continuous session that ended on its own.
@@ -157,14 +166,31 @@ type Options = {
    * which opens Echo and waits rather than speaking nothing.
    */
   onEcho: (sentence: string) => void;
+  /** A possible-fall countdown is visible and may be cancelled hands-free. */
+  fallAlertActive: boolean;
+  /** Cancel the pending caregiver alert after a final safety phrase. */
+  onFallAlertCancel: () => void;
+  /** Increments when Claude has spoken a conversational reply. */
+  followUpToken: number;
+  /** True while Duo's main TTS can be interrupted by saying the wake phrase. */
+  interruptibleSpeaking: boolean;
   /**
-   * True while the app is speaking. Recognition is suspended for the duration,
-   * so Duo cannot hear its own voice.
+   * True when another audio/recognition flow owns the microphone. Unlike main
+   * TTS, this suspends recognition completely.
    */
   muted: boolean;
 };
 
-export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): SpeechCommandsStatus {
+export function useSpeechCommands({
+  onHeard,
+  onWake,
+  onEcho,
+  fallAlertActive,
+  onFallAlertCancel,
+  followUpToken,
+  interruptibleSpeaking,
+  muted,
+}: Options): SpeechCommandsStatus {
   // Both callbacks close over session state and change identity on most
   // renders. Held in refs so the native listeners never capture a stale one —
   // the same hazard the vision stream documents, for a different subscription.
@@ -174,6 +200,12 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
   onWakeRef.current = onWake;
   const onEchoRef = useRef(onEcho);
   onEchoRef.current = onEcho;
+  const fallAlertActiveRef = useRef(fallAlertActive);
+  fallAlertActiveRef.current = fallAlertActive;
+  const onFallAlertCancelRef = useRef(onFallAlertCancel);
+  onFallAlertCancelRef.current = onFallAlertCancel;
+  const interruptibleSpeakingRef = useRef(interruptibleSpeaking);
+  interruptibleSpeakingRef.current = interruptibleSpeaking;
 
   const [listening, setListening] = useState(false);
   const [available, setAvailable] = useState(false);
@@ -207,6 +239,8 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
   const sessionKindRef = useRef<'wake' | 'oneshot' | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const permissionRef = useRef<boolean | null>(null);
+  const lastFollowUpTokenRef = useRef(followUpToken);
+  const pendingFollowUpRef = useRef<{ token: number; sawSpeaking: boolean } | null>(null);
 
   /*
    * The wake phrase used to require on-device recognition, as a privacy rule I
@@ -218,10 +252,10 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
    * A privacy guarantee that turns the app off is not a guarantee anyone
    * benefits from.
    *
-   * So the wake phrase now runs either way, and the dev overlay says which
-   * mode is in use rather than the app quietly choosing for the user. The
-   * offline pack is requested in the background; once Android installs it,
-   * the next launch is on-device again and the note disappears.
+   * So the wake phrase now runs either way. Capability is checked silently:
+   * use the on-device recogniser when its English pack is already installed,
+   * otherwise use Android's platform default without opening the system model
+   * download dialog during app startup.
    */
   const wakeSupported = available;
   const wakeActive = wakeSupported && wakeEnabled && !muted;
@@ -268,15 +302,13 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
           return;
         }
 
-        // Ask for the pack, so the privacy-preserving path becomes available
-        // for next time, and fall back to the platform default meanwhile.
-        // Better a working microphone now with a note about it than a silent
-        // one that looks broken.
+        // Do not trigger Android's model-download flow here. On this device it
+        // opens a confirmation activity every time the app starts while the
+        // pack is absent. A startup capability check must be read-only: the
+        // platform recogniser remains functional over the network, and a pack
+        // installed separately will be picked up on the next launch.
         setUsingOnDevice(false);
-        setOnDeviceNote(`no offline model (${installed.length} installed), using platform default`);
-        void ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({
-          locale: 'en-US',
-        }).catch(() => undefined);
+        setOnDeviceNote('');
       } catch {
         if (cancelled) return;
         setAvailable(false);
@@ -295,10 +327,32 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
     setArmed(false);
   }, []);
 
-  const arm = useCallback(() => {
-    armedUntilRef.current = Date.now() + ARMED_WINDOW_MS;
+  const arm = useCallback((durationMs = ARMED_WINDOW_MS) => {
+    armedUntilRef.current = Date.now() + durationMs;
     setArmed(true);
   }, []);
+
+  // A friendly Claude reply gets one short conversational follow-up window.
+  // Wait until TTS has both started and finished before arming; otherwise the
+  // eight-second window would be consumed while Duo itself is still talking.
+  useEffect(() => {
+    if (followUpToken === lastFollowUpTokenRef.current) return;
+    lastFollowUpTokenRef.current = followUpToken;
+    pendingFollowUpRef.current = { token: followUpToken, sawSpeaking: interruptibleSpeaking };
+  }, [followUpToken, interruptibleSpeaking]);
+
+  useEffect(() => {
+    const pending = pendingFollowUpRef.current;
+    if (!pending) return;
+    if (interruptibleSpeaking) {
+      pending.sawSpeaking = true;
+      return;
+    }
+    if (pending.sawSpeaking) {
+      pendingFollowUpRef.current = null;
+      arm(CONVERSATION_WINDOW_MS);
+    }
+  }, [interruptibleSpeaking, arm]);
 
   /** Opens a recognition session. Continuous when listening for the wake phrase. */
   const startSession = useCallback(
@@ -378,6 +432,35 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
   useSpeechRecognitionEvent('result', (event) => {
     const transcripts = event.results.map((r) => r.transcript).filter(Boolean);
     if (transcripts.length === 0) return;
+
+    /*
+     * Barge-in is deliberately wake-gated. Android may transcribe audio coming
+     * from the phone's own speaker, so accepting arbitrary speech here would
+     * let Duo execute words from its own reply. A user saying "hey duo" is the
+     * one unambiguous interruption signal: stop TTS immediately, then either
+     * handle the remainder of the final transcript or keep listening for it.
+     */
+    if (interruptibleSpeakingRef.current) {
+      for (const transcript of transcripts) {
+        const wake = matchWakePhrase(transcript);
+        if (!wake.matched || wake.target !== 'duo') continue;
+
+        setLastHeard(transcript);
+        void Speech.stop();
+        const route = routeWakeMatch(wake, event.isFinal);
+        if (route.kind === 'instruction') {
+          disarm();
+          onHeardRef.current(route.sentence);
+        } else {
+          arm();
+        }
+        return;
+      }
+
+      // This is normally Duo's own voice. Never display or act on it.
+      return;
+    }
+
     setLastHeard(transcripts[0]);
 
     /*
@@ -390,37 +473,46 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
      * useful, but a half-heard sentence is easily a different sentence, and
      * acting on it would end a session the user was mid-way through.
      *
-     * The guard below makes that concrete: a wake match on a partial arms and
-     * reacts, and anything else waits for the final.
+     * The guard below makes that concrete: a partial Duo wake may arm the
+     * command window, but nothing is allowed to speak, navigate, or execute
+     * until Android marks the transcript final.
      */
     const isFinal = event.isFinal;
     const now = Date.now();
+
+    // A safety cancellation cannot require a wake phrase or a usable hand.
+    // It is available only while the countdown is visible, and only from a
+    // final transcript so a partial cannot cancel an alert accidentally.
+    if (isFinal && fallAlertActiveRef.current && transcripts.some(isFallAlertCancelRequest)) {
+      disarm();
+      onFallAlertCancelRef.current();
+      return;
+    }
 
     // 1. The wake phrase, checked across every alternative. "duo" is a name,
     //    so it is exactly the kind of token a general recogniser demotes.
     for (const transcript of transcripts) {
       const wake = matchWakePhrase(transcript);
       if (!wake.matched) continue;
+      const route = routeWakeMatch(wake, isFinal);
 
-      // Echo takes the rest of the sentence verbatim. It is not parsed for
-      // commands: the whole point is that the user is saying something they
-      // want spoken aloud, and a sentence containing the word "stop" must not
-      // stop the session.
-      if (wake.target === 'echo') {
+      if (route.kind === 'defer') {
+        // Arming on a partial Duo wake is safe because it has no visible or
+        // audible side effect. Echo needs no armed window: its final wake
+        // transcript carries the complete sentence itself.
+        if (wake.target === 'duo') arm();
+        return;
+      }
+
+      // Echo takes the final remainder verbatim. It is not parsed for
+      // commands: a sentence containing "stop" must not stop the session.
+      if (route.kind === 'echo') {
         disarm();
-        onEchoRef.current(wake.remainder);
+        onEchoRef.current(route.sentence);
         return;
       }
 
-      // A partial can carry the name but a truncated instruction, so the
-      // remainder is only acted on once the utterance is complete. The wake
-      // itself still lands immediately, which is the part the user feels.
-      if (!isFinal && wake.remainder) {
-        if (!armed) arm();
-        return;
-      }
-
-      if (wake.remainder) {
+      if (route.kind === 'instruction') {
         /*
          * Anything said after the name is an instruction, and every one of
          * them goes on to be understood — by the model first, by the keyword
@@ -437,18 +529,27 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
          *
          * The transcript is now passed on whatever it says. Deciding what a
          * sentence means is not this function's job.
-         */
+        */
         disarm();
-        onHeardRef.current(wake.remainder);
+        onHeardRef.current(route.sentence);
         return;
       }
 
-      // A bare "hey duo". Duo reacts and waits for the instruction.
+      // A final bare "hey duo". Duo reacts and waits for the instruction.
       arm();
       if (now - lastWakeAt.current > 1500) {
         lastWakeAt.current = now;
         onWakeRef.current();
       }
+      return;
+    }
+
+    // A one-word entry point matters for people who stutter. It is checked
+    // only on a final, exact short phrase, so an interim "e..." or ordinary
+    // speech containing the word echo cannot open the panel.
+    if (isFinal && transcripts.some(isOpenEchoRequest)) {
+      disarm();
+      onEchoRef.current('');
       return;
     }
 
@@ -478,8 +579,8 @@ export function useSpeechCommands({ onHeard, onWake, onEcho, muted }: Options): 
       restartTimerRef.current = null;
     }
 
-    // Duo is speaking. Whatever is listening has to stop, wake session or not,
-    // or the app hears its own voice.
+    // Another audio flow owns recognition. Main Duo TTS is not represented by
+    // `muted`: its session stays open for wake-gated interruption above.
     if (muted) {
       if (sessionKindRef.current !== null) {
         try {

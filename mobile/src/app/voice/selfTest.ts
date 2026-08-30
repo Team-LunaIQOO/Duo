@@ -29,6 +29,7 @@ import {
   otherExercise,
   parseExerciseRequest,
 } from './navigation';
+import * as navigation from './navigation';
 
 declare const process: { exit(code: number): void };
 
@@ -275,6 +276,35 @@ expectRoute('hey echo I need some water', 'echo', 'i need some water');
 
 // Nothing that is not a wake phrase routes anywhere.
 expectRoute('lets do some curls', 'ignore');
+
+// Interim transcripts are unstable. Acting on a partial bare wake makes Duo
+// speak, which aborts recognition before the command at the end of the same
+// utterance arrives. Echo has the same failure mode: opening the panel mutes
+// the wake recogniser and truncates the sentence intended for Echo.
+const routeInterim = routeWakeMatch as unknown as (
+  match: ReturnType<typeof matchWakePhrase>,
+  isFinal: boolean
+) => { kind: string };
+check('partial "hey duo" waits for the final transcript', routeInterim(matchWakePhrase('hey duo'), false).kind === 'defer');
+check('partial Duo command waits for the final transcript', routeInterim(matchWakePhrase('hey duo open echo'), false).kind === 'defer');
+check('partial Echo sentence waits for the final transcript', routeInterim(matchWakePhrase('hey echo I need'), false).kind === 'defer');
+
+// Opening Echo cannot depend on Claude being reachable. This optional lookup
+// deliberately makes the old implementation fail at runtime rather than fail
+// to compile before the local route exists.
+const openEcho = (navigation as typeof navigation & { isOpenEchoRequest?: (heard: string) => boolean }).isOpenEchoRequest;
+check('the single word "echo" opens the communication aid', openEcho?.('echo') === true);
+check('"open echo" has a deterministic local route', openEcho?.('open echo') === true);
+check('"please open echo" has a deterministic local route', openEcho?.('please open echo') === true);
+check('ordinary speech containing "echo" does not open it', openEcho?.('there was an echo in the room') === false);
+
+const cancelFallAlert = (navigation as typeof navigation & {
+  isFallAlertCancelRequest?: (heard: string) => boolean;
+}).isFallAlertCancelRequest;
+check('"I am okay" cancels a pending fall alert', cancelFallAlert?.('I am okay') === true);
+check('a repeated "I I am okay" remains usable', cancelFallAlert?.('I I am okay') === true);
+check('"cancel alert" cancels a pending fall alert', cancelFallAlert?.('cancel alert') === true);
+check('unrelated reassurance does not cancel a fall alert', cancelFallAlert?.('everything looks okay') === false);
 
 console.log(
   failures === 0

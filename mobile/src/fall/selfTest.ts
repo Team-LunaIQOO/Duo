@@ -13,9 +13,10 @@ function frame(timestamp: number, centerY: number, torsoLean = 0, visible = true
   return { timestamp, landmarks, confidence: visible ? 0.8 : 0.1, inFrame: visible };
 }
 
-function run(frames: PoseFrame[]) {
+function run(frames: PoseFrame[], enabled = true) {
   const detector = new FallDetector();
-  return frames.flatMap((item) => detector.update(item) ?? []);
+  const update = detector.update as (frame: PoseFrame, enabled?: boolean) => ReturnType<FallDetector['update']>;
+  return frames.flatMap((item) => update.call(detector, item, enabled) ?? []);
 }
 
 function baseline(start = 0): PoseFrame[] {
@@ -61,5 +62,13 @@ const fallLost = run([
   ...Array.from({ length: 28 }, (_, index) => frame(1050 + index * 50, 0.62, 0, false)),
 ]);
 check('rapid drop followed by tracking loss fires once', fallLost.length === 1);
+
+const disabledFall = run([
+  ...baseline(),
+  frame(800, 0.43),
+  frame(1000, 0.62, 0.22),
+  ...Array.from({ length: 28 }, (_, index) => frame(1050 + index * 50, 0.64, 0.24)),
+], false);
+check('fall-shaped movement stays silent outside the enabled exercise session', disabledFall.length === 0);
 
 if (failures) process.exit(1);

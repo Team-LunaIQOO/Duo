@@ -124,6 +124,26 @@ export function isOtherArmRequest(heard: string): boolean {
   return OTHER_ARM_PHRASES.some((phrase) => text.includes(phrase));
 }
 
+/**
+ * Accessibility-first voice entry to the communication aid.
+ *
+ * Kept deliberately exact: a person who stutters can say the single word
+ * "Echo", while ordinary sentences that merely contain the word do not open
+ * a modal panel unexpectedly.
+ */
+export function isOpenEchoRequest(heard: string): boolean {
+  const text = normalise(heard);
+  return /^(?:please )?(?:(?:open|launch|start) )?echo(?: please)?$/.test(text);
+}
+
+/** Hands-free cancellation phrases accepted only while a fall countdown runs. */
+export function isFallAlertCancelRequest(heard: string): boolean {
+  let text = normalise(heard).replace(/\bi m\b/g, 'i am');
+  const tokens = text.split(' ').filter((token, index, all) => token !== all[index - 1]);
+  text = tokens.join(' ').replace(/^(?:i am\s+)+(?=(?:okay|ok)$)/, 'i am ');
+  return /^(?:okay|ok|i am (?:okay|ok)|im (?:okay|ok)|cancel (?:the )?alert|do not send (?:the )?alert)$/.test(text);
+}
+
 /** The exercise that is not this one. Two exercises, so this is a flip. */
 export function otherExercise(current: ExerciseId | null): ExerciseId {
   return current === 'E3' ? 'E1' : 'E3';

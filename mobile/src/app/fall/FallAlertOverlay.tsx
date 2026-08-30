@@ -7,20 +7,31 @@ type Props = {
   state: FallAlertState;
   onCancel: () => void;
   onDismiss: () => void;
+  onSpeakingChange?: (speaking: boolean) => void;
 };
 
-export function FallAlertOverlay({ state, onCancel, onDismiss }: Props) {
+export function FallAlertOverlay({ state, onCancel, onDismiss, onSpeakingChange }: Props) {
   const announced = useRef(false);
 
   useEffect(() => {
     if (state.status === 'countdown' && !announced.current) {
       announced.current = true;
-      Speech.speak('I detected a possible fall. Tap I am okay to cancel the caregiver alert.', {
+      void Speech.stop();
+      onSpeakingChange?.(true);
+      const done = () => onSpeakingChange?.(false);
+      Speech.speak('I detected a possible fall. Say I am okay, or tap the button, to cancel the caregiver alert.', {
         rate: 0.85,
+        onDone: done,
+        onStopped: done,
+        onError: done,
       });
     }
-    if (state.status === 'idle') announced.current = false;
-  }, [state.status]);
+    if (state.status === 'idle') {
+      announced.current = false;
+      void Speech.stop();
+      onSpeakingChange?.(false);
+    }
+  }, [state.status, onSpeakingChange]);
 
   if (state.status === 'idle') return null;
 

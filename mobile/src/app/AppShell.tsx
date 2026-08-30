@@ -35,7 +35,11 @@ export function AppShell() {
   const controller = useSessionController();
   const { session } = controller;
   const fallAlertEndpoint = process.env.EXPO_PUBLIC_FALL_ALERT_PROXY_URL;
-  const fallAlert = useFallAlert(fallAlertEndpoint);
+  // Fall detection is a scoped elbow-curl session capability, not a global
+  // camera side effect. This keeps idle/setup/shoulder movement and pauses
+  // from producing a caregiver-alert popup while preserving the pitch demo.
+  const fallDetectionEnabled = session.phase === 'active' && session.exercise === 'E3';
+  const fallAlert = useFallAlert(fallAlertEndpoint, fallDetectionEnabled);
   const poseHandlers = useRef({ session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame });
   poseHandlers.current = { session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame };
   const handlePoseFrame = useCallback((frame: PoseFrame) => {
@@ -43,9 +47,10 @@ export function AppShell() {
     poseHandlers.current.fall(frame);
   }, []);
 
-  // `speaking` closes the microphone for as long as Duo is talking. Without
-  // it the wake session hears Duo say "Paused. Tap or say start when ready",
-  // matches the word start, and resumes the session it just paused.
+  // Main TTS is interruptible by the wake phrase. useSpeechCommands ignores
+  // every other recognition result while Duo talks, so its own feedback cannot
+  // execute a command. Fall and Echo speech remain fully muted because they
+  // have separate safety/recognition flows.
   const speaking = useSpeakOnChange(session.lastSpoken);
 
   // Speech recognition lives here rather than inside useSessionController, so
@@ -60,15 +65,20 @@ export function AppShell() {
   // onOpenChange. useState's setter is stable, so this does not re-subscribe
   // anything.
   const [secondVoiceOpen, setSecondVoiceOpen] = useState(false);
+  const [fallAlertSpeaking, setFallAlertSpeaking] = useState(false);
 
   // "hey echo, <sentence>" arrives here and is handed to the panel. The id
   // rises every time so the same sentence said twice runs twice.
   const [spokenToEcho, setSpokenToEcho] = useState<{ id: number; text: string }>();
   const echoIdRef = useRef(0);
   const handleEcho = useCallback((sentence: string) => {
+    // Echo owns Android's recogniser while its panel is open. Pause an active
+    // exercise first so rep counting does not continue invisibly underneath
+    // the communication aid; the resting phase also enables the panel.
+    if (session.phase === 'active') controller.pauseSession();
     echoIdRef.current += 1;
     setSpokenToEcho({ id: echoIdRef.current, text: sentence });
-  }, []);
+  }, [controller.pauseSession, session.phase]);
 
   // "hey duo, I want to say something" routes here through the intent.
   const { setEchoRequestHandler } = controller;
@@ -94,7 +104,11 @@ export function AppShell() {
     onHeard: controller.handleHeardSpeech,
     onWake: controller.handleWake,
     onEcho: handleEcho,
-    muted: speaking || secondVoiceOpen,
+    fallAlertActive: fallAlert.state.status === 'countdown',
+    onFallAlertCancel: fallAlert.cancel,
+    followUpToken: controller.conversationTurn,
+    interruptibleSpeaking: speaking,
+    muted: secondVoiceOpen || fallAlertSpeaking,
   });
 
   return (
@@ -174,6 +188,7 @@ export function AppShell() {
         state={fallAlert.state}
         onCancel={fallAlert.cancel}
         onDismiss={fallAlert.dismiss}
+        onSpeakingChange={setFallAlertSpeaking}
       />
     </View>
   );
