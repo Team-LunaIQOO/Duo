@@ -377,7 +377,11 @@ export function useSessionController() {
 
           const feedbackLine = pickRepFeedback(rep, previousQualityRef.current);
           if (feedbackLine) {
-            next = machine.speak(next, feedbackLine);
+            // say() is the only speaker. Writing the line here as well made
+            // Duo say it twice whenever Claude answered: once from the table
+            // immediately, then again in different words a second later. It
+            // never showed up in testing because the model was never actually
+            // being reached — the bug only existed when things WORKED.
             say(
               `The user just completed a good rep after a compensated one. Rep ${rep.repNumber}.`,
               feedbackLine
@@ -392,7 +396,7 @@ export function useSessionController() {
             next = machine.applyFatigue(next, signal);
             if (signal.level !== 'none') {
               const line = FATIGUE_LINES[signal.level];
-              next = machine.speak(next, line);
+              // Single speaker, same reason as the rep feedback above.
               say(
                 signal.level === 'fatigued'
                   ? `The user is fatigued after ${s.reps.length + 1} reps. Offer to stop for today, warmly, crediting what they did.`
