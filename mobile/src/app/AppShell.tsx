@@ -32,7 +32,13 @@ export function AppShell() {
     });
   }, []);
 
-  const controller = useSessionController();
+  // useSessionController needs a stable callback to wire into the camera
+  // transport before fallAlert exists (fallAlert.simulateFall depends on
+  // state useSessionController does not own). A ref lets the identity handed
+  // to useSessionController stay fixed for the component's lifetime while the
+  // function it forwards to is filled in below, once fallAlert is created.
+  const simulateFallRef = useRef<() => void>(() => {});
+  const controller = useSessionController(useCallback(() => simulateFallRef.current(), []));
   const { session } = controller;
   const fallAlertEndpoint = process.env.EXPO_PUBLIC_FALL_ALERT_PROXY_URL;
   // Fall detection is a scoped elbow-curl session capability, not a global
@@ -40,6 +46,7 @@ export function AppShell() {
   // from producing a caregiver-alert popup while preserving the pitch demo.
   const fallDetectionEnabled = session.phase === 'active' && session.exercise === 'E3';
   const fallAlert = useFallAlert(fallAlertEndpoint, fallDetectionEnabled);
+  simulateFallRef.current = fallAlert.simulateFall;
   const poseHandlers = useRef({ session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame });
   poseHandlers.current = { session: controller.handlePoseFrame, fall: fallAlert.handlePoseFrame };
   const handlePoseFrame = useCallback((frame: PoseFrame) => {

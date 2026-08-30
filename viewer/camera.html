@@ -101,6 +101,24 @@
   button:hover { color: var(--ink); border-color: rgba(237,234,228,0.16); }
   button[aria-pressed="true"] { color: var(--bg); background: var(--bone); border-color: var(--bone); }
 
+  /*
+   * Invisible on purpose: see the script section for why. Sized generously
+   * (a quarter of the view, not a pixel-precise corner) because the point is
+   * to be un-labelled, not hard to physically hit — a demo operator should
+   * not need pixel accuracy under stage pressure.
+   */
+  .fallTriggerHotspot {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 30%;
+    height: 30%;
+    min-width: 120px;
+    min-height: 120px;
+    z-index: 1000;
+    pointer-events: auto;
+  }
+
   .status {
     display: flex; align-items: center; gap: 9px;
     margin-left: 8px; padding-left: 14px;
@@ -180,6 +198,7 @@
 
 <main>
   <canvas id="canvas"></canvas>
+  <div id="fallTriggerHotspot" class="fallTriggerHotspot"></div>
   <div class="distance" id="distance" hidden>
     <span class="sub">distance (estimated)</span>
     <span class="label" id="distanceLabel"></span>
@@ -338,6 +357,39 @@ btnFollow.onclick = () => {
   followPerson = !followPerson;
   btnFollow.setAttribute('aria-pressed', String(followPerson));
 };
+
+// --- demo fall trigger -------------------------------------------------------
+//
+// Sends {type:'simulate_fall'} on this page's own socket. The relay forwards
+// it to every connected phone (relay.js), and the phone's transport treats it
+// exactly like a real detection reaching useFallAlert — same countdown, same
+// spoken warning, same caregiver alert if configured — without touching the
+// real FallDetector's state. See WebSocketClientTransport.onSimulateFall for
+// the trust boundary this crosses: the phone accepts nothing here beyond
+// "fire", the same posture as the note and snapshot-request messages already
+// sent from the other viewer page.
+//
+// Hidden and unconfirmed on purpose, the same posture as the phone's own dev
+// overlay (tap the top-left corner three times) — a control meant for
+// whoever is running the demo, not something a caretaker should stumble into
+// while watching the feed. Three taps close together in the bottom-right
+// corner fire it immediately, no dialog.
+const FALL_TRIGGER_TAPS = 3;
+const FALL_TRIGGER_WINDOW_MS = 1500;
+let fallTriggerTaps = 0;
+let fallTriggerLastTapAt = 0;
+
+document.getElementById('fallTriggerHotspot').addEventListener('click', () => {
+  const now = performance.now();
+  const withinWindow = now - fallTriggerLastTapAt <= FALL_TRIGGER_WINDOW_MS;
+  fallTriggerLastTapAt = now;
+  fallTriggerTaps = withinWindow ? fallTriggerTaps + 1 : 1;
+  if (fallTriggerTaps < FALL_TRIGGER_TAPS) return;
+  fallTriggerTaps = 0;
+
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'simulate_fall' }));
+});
 
 // --- the person box --------------------------------------------------------
 

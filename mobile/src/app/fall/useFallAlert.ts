@@ -58,6 +58,25 @@ export function useFallAlert(endpoint: string | undefined, enabled: boolean) {
     setState({ status: 'countdown', secondsRemaining: COUNTDOWN_SECONDS, event });
   }, [setState]);
 
+  /**
+   * Forces the exact same countdown → alert path a real detection takes,
+   * without needing an actual fall or the session to be on E3. For demo use
+   * behind a hidden trigger: fall detection is only armed during a specific
+   * exercise (see AppShell), which makes a real fall inconvenient to stage on
+   * request. This does not touch the detector's own state, so it never
+   * counts toward FALL_THRESHOLDS.cooldownMs and cannot mask a real miss.
+   */
+  const simulateFall = useCallback(() => {
+    if (stateRef.current.status !== 'idle') return;
+    const event: FallEvent = {
+      timestamp: Date.now(),
+      confidence: 'possible',
+      reason: 'rapid_drop_low_posture',
+    };
+    deadline.current = Date.now() + COUNTDOWN_SECONDS * 1000;
+    setState({ status: 'countdown', secondsRemaining: COUNTDOWN_SECONDS, event });
+  }, [setState]);
+
   useEffect(() => {
     detector.current.setEnabled(enabled);
     if (enabled) return;
@@ -95,5 +114,5 @@ export function useFallAlert(endpoint: string | undefined, enabled: boolean) {
     setState({ status: 'idle' });
   }, [setState]);
 
-  return { state, handlePoseFrame, cancel, dismiss };
+  return { state, handlePoseFrame, cancel, dismiss, simulateFall };
 }

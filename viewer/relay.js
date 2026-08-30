@@ -323,6 +323,16 @@ server.on('upgrade', (req, socket) => {
           return;
         }
 
+        if (parsed?.type === 'simulate_fall') {
+          // Same shape as snapshot_request: carries no data, re-serialised so
+          // a viewer cannot smuggle extra fields through to the phone. Fires
+          // the phone's fall-alert flow as a demo, without touching its real
+          // FallDetector -- see WebSocketClientTransport.onSimulateFall.
+          const fallMessage = JSON.stringify({ type: 'simulate_fall' });
+          for (const phoneSend of phones) phoneSend(fallMessage, OPCODE.TEXT);
+          return;
+        }
+
         return;
       }
 

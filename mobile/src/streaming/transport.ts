@@ -46,6 +46,16 @@ export type StreamTransport = {
    * sent back over this socket, only a yes/no acknowledgement.
    */
   onSnapshotRequest?: () => void;
+  /**
+   * Called when the viewer fires the demo fall-alert trigger. Same trust
+   * posture as onNote and onSnapshotRequest: a bare, unparameterised signal,
+   * validated strictly before ever being invoked. Its only effect is asking
+   * the fall-alert flow to run its normal countdown/speech/Telegram path as
+   * if a real fall had been detected -- it never touches the real
+   * FallDetector's state (so it cannot mask a genuine miss during
+   * rehearsal), and the sender cannot pass it anything beyond "fire".
+   */
+  onSimulateFall?: () => void;
 };
 
 /**
@@ -96,6 +106,7 @@ export class WebSocketClientTransport implements StreamTransport {
   onStateChange?: (state: TransportState) => void;
   onNote?: (text: string) => void;
   onSnapshotRequest?: () => void;
+  onSimulateFall?: () => void;
 
   /** Hard ceiling independent of the transport's normal maxMessageBytes,
    * which governs outbound sizing policy, not what this phone will accept
@@ -215,13 +226,15 @@ export class WebSocketClientTransport implements StreamTransport {
       this.scheduleRetry();
     };
 
-    // The phone is one-way except for two narrow, explicitly allow-listed
+    // The phone is one-way except for three narrow, explicitly allow-listed
     // shapes. This handler is the entire trust boundary: anything that is
-    // not exactly one of these two is rejected outright, and neither
-    // handler receives anything the sender can parameterise beyond what is
+    // not exactly one of these is rejected outright, and none of the
+    // handlers receive anything the sender can parameterise beyond what is
     // declared here.
     //   {type:'note', text}       -> spoken verbatim, never interpreted
     //   {type:'snapshot_request'} -> asks the vision layer for one JPEG;
+    //                                carries no data of its own at all
+    //   {type:'simulate_fall'}    -> runs the fall-alert flow as a demo;
     //                                carries no data of its own at all
     s.onmessage = (event) => {
       if (typeof event.data !== 'string') return;
@@ -246,6 +259,11 @@ export class WebSocketClientTransport implements StreamTransport {
 
       if (type === 'snapshot_request' && this.onSnapshotRequest) {
         this.onSnapshotRequest();
+        return;
+      }
+
+      if (type === 'simulate_fall' && this.onSimulateFall) {
+        this.onSimulateFall();
       }
     };
   }

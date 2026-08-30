@@ -49,7 +49,7 @@ import * as FileSystem from 'expo-file-system/legacy';
  * the tree deliberately — they are the only way to exercise the app without
  * the loaner device, and demo/RUNBOOK.md leans on that for rehearsal.
  */
-export function useSessionController() {
+export function useSessionController(onSimulateFall?: () => void) {
   const [session, setSession] = useState<SessionState>(machine.createInitialSessionState());
   const previousQualityRef = useRef<RepEvent['quality'] | null>(null);
 
@@ -220,12 +220,24 @@ export function useSessionController() {
   //
   // That gate matters: JPEG encoding is not free, and the pose pipeline is
   // sharing this device.
+  const cameraTransport = useMemo(() => new WebSocketClientTransport({ url: CAMERA_STREAM_URL }), []);
   const cameraPublisher = useMemo(
-    () => new StreamPublisher(new WebSocketClientTransport({ url: CAMERA_STREAM_URL }), {
+    () => new StreamPublisher(cameraTransport, {
       config: { frameFps: CAMERA_STREAM_FPS },
     }),
-    []
+    [cameraTransport]
   );
+
+  // The demo fall trigger lives on the camera page (camera.html), not the
+  // session viewer, because it is an operator/caretaker control rather than
+  // session telemetry — see FallDemoTrigger and WebSocketClientTransport's
+  // onSimulateFall for the trust boundary this crosses.
+  useEffect(() => {
+    cameraTransport.onSimulateFall = onSimulateFall;
+    return () => {
+      cameraTransport.onSimulateFall = undefined;
+    };
+  }, [cameraTransport, onSimulateFall]);
 
   useEffect(() => {
     cameraPublisher.start();
