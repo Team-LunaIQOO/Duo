@@ -138,6 +138,27 @@
     pointer-events: none;
   }
   .readout b { color: var(--dim); font-weight: 400; }
+
+  .distance {
+    position: absolute; left: 22px; top: 18px;
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 10px 13px;
+    background: rgba(8, 9, 12, 0.72);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font: 400 11px/1.5 var(--mono);
+    color: var(--dim);
+    pointer-events: none;
+    transition: opacity 200ms ease;
+  }
+  .distance[hidden] { display: none; }
+  .distance .label {
+    font: 500 12px/1 var(--sans);
+    letter-spacing: 0.02em;
+  }
+  .distance .label.good { color: var(--good); }
+  .distance .label.warn { color: var(--warn); }
+  .distance .sub { color: var(--faint); }
 </style>
 </head>
 
@@ -149,7 +170,7 @@
   <div class="bar-right">
     <button id="box" aria-pressed="true" title="Draw the detection box around the person.">Box</button>
     <button id="skeleton" aria-pressed="false" title="Overlay the pose skeleton on the video.">Skeleton</button>
-    <button id="follow" aria-pressed="false" title="Pan and zoom the view to keep the person centred.">Follow</button>
+    <button id="follow" aria-pressed="false" title="Crop the view to the person, tracking their shape as they move.">Follow</button>
     <div class="status">
       <span class="eye" id="dot"></span>
       <span id="statusText">connecting…</span>
@@ -159,6 +180,11 @@
 
 <main>
   <canvas id="canvas"></canvas>
+  <div class="distance" id="distance" hidden>
+    <span class="sub">distance (estimated)</span>
+    <span class="label" id="distanceLabel"></span>
+    <span class="sub" id="distanceSub"></span>
+  </div>
   <div class="readout" id="readout"></div>
   <div class="curtain" id="curtain">
     <strong id="curtainTitle">Waiting for the camera</strong>
@@ -200,6 +226,9 @@ const curtainTitle = document.getElementById('curtainTitle');
 const curtainBody = document.getElementById('curtainBody');
 const verdictEl = document.getElementById('verdict');
 const readoutEl = document.getElementById('readout');
+const distanceEl = document.getElementById('distance');
+const distanceLabelEl = document.getElementById('distanceLabel');
+const distanceSubEl = document.getElementById('distanceSub');
 
 let socket = null;
 let reconnectDelay = 500;
@@ -299,8 +328,12 @@ btnSkeleton.onclick = () => {
   btnSkeleton.setAttribute('aria-pressed', String(showSkeleton));
 };
 
-let followPerson = false;
+// On by default: a caretaker opening this page wants a camera that follows
+// the person automatically, the way a vlogger's tracking shot does, not a
+// feature they have to discover and switch on first.
+let followPerson = true;
 const btnFollow = document.getElementById('follow');
+btnFollow.setAttribute('aria-pressed', 'true');
 btnFollow.onclick = () => {
   followPerson = !followPerson;
   btnFollow.setAttribute('aria-pressed', String(followPerson));
@@ -363,34 +396,82 @@ function personBox() {
   };
 }
 
-// --- follow (pan/zoom crop) --------------------------------------------------
+// --- framing / estimated distance -------------------------------------------
 
 /*
- * "Follow" does not move the phone — it is a fixed sensor. Instead the view
- * crops into the region around the person and scales that region to fill the
- * canvas, so the person appears centred and larger as they move. The crop
- * window is smoothed (not snapped straight to the box) because the box itself
- * jitters frame to frame with landmark noise; without smoothing "following"
- * would read as shaking rather than panning.
+ * An ESTIMATE, not a measurement. The landmark stream sends [x, y] only — z
+ * and visibility are dropped at the source (see streamPublisher.ts) — and
+ * there is no per-device camera calibration (real focal length, sensor size).
+ * So this assumes a fixed average person height and a fixed camera vertical
+ * field of view, then inverts the pinhole projection:
+ *
+ *   observed_height_fraction = real_height / (2 * distance * tan(vFOV / 2))
+ *   distance = real_height / (2 * observed_height_fraction * tan(vFOV / 2))
+ *
+ * Both assumptions are guesses (adult average height, a typical phone rear
+ * camera's vertical FOV), so this reads as "about 1.6m" and is labelled
+ * "estimated" in the UI rather than shown as a precise figure. A taller or
+ * shorter person, or a different camera, shifts the true number without
+ * changing anything this code can detect.
  */
-const FOLLOW_SMOOTHING = 0.06; // lower = smoother/slower, higher = snappier
-const FOLLOW_ZOOM_PAD = 0.8;   // fraction of box's larger side kept as margin around the person
-const FOLLOW_MIN_SIZE = 0.35;  // never zoom in tighter than this fraction of the frame's shorter side
+const ASSUMED_PERSON_HEIGHT_M = 1.70;
+const ASSUMED_VERTICAL_FOV_DEG = 70;
+const HALF_FOV_TAN = Math.tan((ASSUMED_VERTICAL_FOV_DEG * Math.PI) / 180 / 2);
 
-let followCrop = null; // { cx, cy, size } in normalised 0..1 frame coordinates; size is a fraction of the frame's shorter side
+const FRAMING_GOOD_MIN = 0.42;
+const FRAMING_GOOD_MAX = 0.82;
+
+function estimatedDistanceMeters(boxHeightFraction) {
+  if (boxHeightFraction <= 0) return null;
+  return ASSUMED_PERSON_HEIGHT_M / (2 * boxHeightFraction * HALF_FOV_TAN);
+}
+
+function framingFromBox(box) {
+  if (!box) return null;
+  const fill = Math.round(box.h * 100);
+  const distance = estimatedDistanceMeters(box.h);
+  const tone = box.h < FRAMING_GOOD_MIN || box.h > FRAMING_GOOD_MAX ? 'warn' : 'good';
+  return { distance, fill, tone };
+}
+
+// --- follow (tight crop to the person) --------------------------------------
 
 /*
- * The crop window's shape must always match the canvas, or the picture visibly
- * resizes every frame instead of panning smoothly — that was the original bug
- * here. So the only things allowed to move are the window's centre and a
- * single zoom scalar; its aspect ratio is fixed by the canvas, not the box.
+ * The phone does not move — it is a fixed sensor. "Follow" crops the frame
+ * down to just the person: the crop's own shape is the person's silhouette
+ * plus a small margin, not a fixed camera-shaped window that merely pans and
+ * zooms. Standing normally, arms at the sides, that shape is narrow and tall
+ * — that is not a bug to correct for here, it is the point: no unwanted
+ * space stays in frame on either side. Stepping back, moving sideways, or
+ * spreading their arms all change what the crop looks like, because it always
+ * reflects only the current extent of the person, in both position and
+ * shape. On by default, so opening the page already gives a camera that
+ * follows the person rather than a feature to discover.
+ *
+ * The crop is smoothed rather than snapped straight to the box because the
+ * box itself jitters frame to frame with landmark noise; without smoothing
+ * this reads as the frame shaking instead of tracking.
  */
+const FOLLOW_SMOOTHING = 0.15; // lower = smoother/slower, higher = snappier
+const FOLLOW_PAD = 0.18;       // margin kept around the person, as a fraction of their size on each side
+const FOLLOW_MIN_SPAN = 0.08;  // never crop tighter than this fraction of the frame, per axis — a floor against
+                                // a person filling only a couple of pixels (a landmark misdetection), not a
+                                // "keep it watchable" cap
+
+let followCrop = null; // { x, y, w, h } in normalised 0..1 source-frame coordinates — exactly what gets drawn
+
 function targetCrop(box) {
-  const span = Math.max(box.w, box.h) * (1 + FOLLOW_ZOOM_PAD);
+  const padX = box.w * FOLLOW_PAD;
+  const padY = box.h * FOLLOW_PAD;
+  const w = Math.max(FOLLOW_MIN_SPAN, Math.min(1, box.w + padX * 2));
+  const h = Math.max(FOLLOW_MIN_SPAN, Math.min(1, box.h + padY * 2));
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
   return {
-    cx: box.x + box.w / 2,
-    cy: box.y + box.h / 2,
-    size: Math.max(FOLLOW_MIN_SIZE, Math.min(1, span)),
+    x: Math.min(Math.max(0, cx - w / 2), 1 - w),
+    y: Math.min(Math.max(0, cy - h / 2), 1 - h),
+    w,
+    h,
   };
 }
 
@@ -403,21 +484,11 @@ function updateFollowCrop(box) {
   }
   const k = FOLLOW_SMOOTHING;
   followCrop = {
-    cx: followCrop.cx + (target.cx - followCrop.cx) * k,
-    cy: followCrop.cy + (target.cy - followCrop.cy) * k,
-    size: followCrop.size + (target.size - followCrop.size) * k,
+    x: followCrop.x + (target.x - followCrop.x) * k,
+    y: followCrop.y + (target.y - followCrop.y) * k,
+    w: followCrop.w + (target.w - followCrop.w) * k,
+    h: followCrop.h + (target.h - followCrop.h) * k,
   };
-}
-
-// Build the actual crop rect for a given canvas aspect, clamped so it never
-// asks for pixels outside the source frame.
-function clampedCropRect(canvasAspect) {
-  const { cx, cy, size } = followCrop;
-  const w = canvasAspect >= 1 ? Math.min(1, size * canvasAspect) : size;
-  const h = canvasAspect >= 1 ? size : Math.min(1, size / canvasAspect);
-  const x = Math.min(Math.max(0, cx - w / 2), 1 - w);
-  const y = Math.min(Math.max(0, cy - h / 2), 1 - h);
-  return { x, y, w, h };
 }
 
 // --- drawing ---------------------------------------------------------------
@@ -456,18 +527,23 @@ function draw() {
 
   if (followPerson && box) {
     updateFollowCrop(box);
-  } else {
+  } else if (!followPerson) {
     followCrop = null;
   }
 
-  // The on-screen rect always fits the video's native aspect ratio and never
-  // changes shape when following — only the crop drawn into it zooms/pans.
-  // Deriving the rect from the crop's own shape was the earlier bug: a
-  // fast-changing box made the picture visibly resize every frame instead of
-  // panning.
-  const aspect = currentImage ? currentImage.width / currentImage.height : 16 / 9;
+  const crop = followPerson && followCrop ? followCrop : { x: 0, y: 0, w: 1, h: 1 };
+
+  // With Follow off, the rect fits the video's native aspect ratio, same as
+  // always. With Follow on, the rect is fit to the CROP's own aspect ratio —
+  // that is the whole point of "cut out the unwanted space": the visible
+  // frame's shape follows the person's actual silhouette, narrow standing
+  // normally, wider with arms out, rather than staying one fixed camera shape
+  // and only panning/zooming within it.
+  const sourceAspect = currentImage ? currentImage.width / currentImage.height : 16 / 9;
+  const aspect = followPerson && followCrop && currentImage
+    ? (crop.w * currentImage.width) / (crop.h * currentImage.height)
+    : sourceAspect;
   const rect = fitRect(w, h, aspect);
-  const crop = followPerson && followCrop ? clampedCropRect(aspect) : { x: 0, y: 0, w: 1, h: 1 };
 
   ctx.fillStyle = '#0a0b10';
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
@@ -542,6 +618,15 @@ function draw() {
 
   verdictEl.textContent = box ? 'person detected' : 'no person';
   verdictEl.className = 'verdict' + (box ? ' seen' : '');
+
+  const framing = framingFromBox(box);
+  distanceEl.hidden = !framing;
+  if (framing) {
+    distanceLabelEl.textContent = `~${framing.distance.toFixed(1)} m`;
+    distanceLabelEl.className = 'label ' + framing.tone;
+    const verdict = framing.tone === 'good' ? 'good distance' : (framing.fill > 82 ? 'too close' : 'too far');
+    distanceSubEl.textContent = `estimated · ${verdict} · fills ${framing.fill}% of frame`;
+  }
 
   const cutoff = performance.now() - 2000;
   frameTicks = frameTicks.filter((t) => t > cutoff);
