@@ -149,6 +149,7 @@
   <div class="bar-right">
     <button id="box" aria-pressed="true" title="Draw the detection box around the person.">Box</button>
     <button id="skeleton" aria-pressed="false" title="Overlay the pose skeleton on the video.">Skeleton</button>
+    <button id="follow" aria-pressed="false" title="Pan and zoom the view to keep the person centred.">Follow</button>
     <div class="status">
       <span class="eye" id="dot"></span>
       <span id="statusText">connecting…</span>
@@ -298,6 +299,13 @@ btnSkeleton.onclick = () => {
   btnSkeleton.setAttribute('aria-pressed', String(showSkeleton));
 };
 
+let followPerson = false;
+const btnFollow = document.getElementById('follow');
+btnFollow.onclick = () => {
+  followPerson = !followPerson;
+  btnFollow.setAttribute('aria-pressed', String(followPerson));
+};
+
 // --- the person box --------------------------------------------------------
 
 const SKELETON = [
@@ -355,6 +363,63 @@ function personBox() {
   };
 }
 
+// --- follow (pan/zoom crop) --------------------------------------------------
+
+/*
+ * "Follow" does not move the phone — it is a fixed sensor. Instead the view
+ * crops into the region around the person and scales that region to fill the
+ * canvas, so the person appears centred and larger as they move. The crop
+ * window is smoothed (not snapped straight to the box) because the box itself
+ * jitters frame to frame with landmark noise; without smoothing "following"
+ * would read as shaking rather than panning.
+ */
+const FOLLOW_SMOOTHING = 0.06; // lower = smoother/slower, higher = snappier
+const FOLLOW_ZOOM_PAD = 0.8;   // fraction of box's larger side kept as margin around the person
+const FOLLOW_MIN_SIZE = 0.35;  // never zoom in tighter than this fraction of the frame's shorter side
+
+let followCrop = null; // { cx, cy, size } in normalised 0..1 frame coordinates; size is a fraction of the frame's shorter side
+
+/*
+ * The crop window's shape must always match the canvas, or the picture visibly
+ * resizes every frame instead of panning smoothly — that was the original bug
+ * here. So the only things allowed to move are the window's centre and a
+ * single zoom scalar; its aspect ratio is fixed by the canvas, not the box.
+ */
+function targetCrop(box) {
+  const span = Math.max(box.w, box.h) * (1 + FOLLOW_ZOOM_PAD);
+  return {
+    cx: box.x + box.w / 2,
+    cy: box.y + box.h / 2,
+    size: Math.max(FOLLOW_MIN_SIZE, Math.min(1, span)),
+  };
+}
+
+function updateFollowCrop(box) {
+  if (!box) return;
+  const target = targetCrop(box);
+  if (!followCrop) {
+    followCrop = target;
+    return;
+  }
+  const k = FOLLOW_SMOOTHING;
+  followCrop = {
+    cx: followCrop.cx + (target.cx - followCrop.cx) * k,
+    cy: followCrop.cy + (target.cy - followCrop.cy) * k,
+    size: followCrop.size + (target.size - followCrop.size) * k,
+  };
+}
+
+// Build the actual crop rect for a given canvas aspect, clamped so it never
+// asks for pixels outside the source frame.
+function clampedCropRect(canvasAspect) {
+  const { cx, cy, size } = followCrop;
+  const w = canvasAspect >= 1 ? Math.min(1, size * canvasAspect) : size;
+  const h = canvasAspect >= 1 ? size : Math.min(1, size / canvasAspect);
+  const x = Math.min(Math.max(0, cx - w / 2), 1 - w);
+  const y = Math.min(Math.max(0, cy - h / 2), 1 - h);
+  return { x, y, w, h };
+}
+
 // --- drawing ---------------------------------------------------------------
 
 const canvas = document.getElementById('canvas');
@@ -387,22 +452,42 @@ function draw() {
   const videoStale = performance.now() - lastFrameAt > 3000;
   const poseStale = performance.now() - lastLandmarkAt > 2000;
 
-  // The video defines the geometry. Landmarks are normalised to the same frame,
-  // so the box lands on the person only if both use this identical rect.
+  const box = poseStale ? null : personBox();
+
+  if (followPerson && box) {
+    updateFollowCrop(box);
+  } else {
+    followCrop = null;
+  }
+
+  // The on-screen rect always fits the video's native aspect ratio and never
+  // changes shape when following — only the crop drawn into it zooms/pans.
+  // Deriving the rect from the crop's own shape was the earlier bug: a
+  // fast-changing box made the picture visibly resize every frame instead of
+  // panning.
   const aspect = currentImage ? currentImage.width / currentImage.height : 16 / 9;
   const rect = fitRect(w, h, aspect);
+  const crop = followPerson && followCrop ? clampedCropRect(aspect) : { x: 0, y: 0, w: 1, h: 1 };
 
   ctx.fillStyle = '#0a0b10';
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
   if (currentImage && !videoStale) {
-    ctx.drawImage(currentImage, rect.x, rect.y, rect.w, rect.h);
+    ctx.drawImage(
+      currentImage,
+      crop.x * currentImage.width, crop.y * currentImage.height,
+      crop.w * currentImage.width, crop.h * currentImage.height,
+      rect.x, rect.y, rect.w, rect.h,
+    );
   }
 
-  const box = poseStale ? null : personBox();
+  // Map a point in the full frame's 0..1 space into the (possibly cropped) rect.
+  const px = (p) => [
+    rect.x + ((p[0] - crop.x) / crop.w) * rect.w,
+    rect.y + ((p[1] - crop.y) / crop.h) * rect.h,
+  ];
 
   if (box && showSkeleton) {
-    const px = (p) => [rect.x + p[0] * rect.w, rect.y + p[1] * rect.h];
     ctx.strokeStyle = 'rgba(232,223,208,0.65)';
     ctx.lineWidth = 2 * dpr;
     ctx.lineCap = 'round';
@@ -418,10 +503,10 @@ function draw() {
   }
 
   if (box && showBox) {
-    const bx = rect.x + box.x * rect.w;
-    const by = rect.y + box.y * rect.h;
-    const bw = box.w * rect.w;
-    const bh = box.h * rect.h;
+    const [bx, by] = px([box.x, box.y]);
+    const [bx2, by2] = px([box.x + box.w, box.y + box.h]);
+    const bw = bx2 - bx;
+    const bh = by2 - by;
 
     // Corner brackets rather than a full rectangle: they read as a tracking
     // box instead of a border, and they leave the face unobscured.
