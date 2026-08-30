@@ -6,6 +6,7 @@ import { anthropicConfigured } from '../voice/anthropicClient';
 import { PhrasebookFallbackProvider } from './fallbackProvider';
 import { useLocalGemma } from './localGemmaProvider';
 import { useSpeechRecognizer } from './useSpeechRecognizer';
+import { SiriOrb, type OrbState } from './SiriOrb';
 import { initialSecondVoiceState, secondVoiceReducer } from './stateMachine';
 import { cleanStutteredSpeech } from './speechCleanup';
 
@@ -139,16 +140,75 @@ export function SecondVoicePanel({ enabled, phraseHints = [], onOpenChange, spok
 
   if (!enabled) return null;
   if (!open) {
-    return <Pressable style={styles.launch} onPress={() => { setOpen(true); dispatch({ type: 'ACTIVATE' }); }}><Text style={styles.launchText}>Echo</Text></Pressable>;
+    return (
+      <Pressable
+        style={styles.launch}
+        onPress={() => { setOpen(true); dispatch({ type: 'ACTIVATE' }); }}
+      >
+        <SiriOrb state="idle" size={26} />
+        <Text style={styles.launchText}>Echo</Text>
+      </Pressable>
+    );
   }
+
+  /*
+   * The orb says which of the four things is happening, so the words below it
+   * do not have to. Siri's whole trick is that you can tell it is listening
+   * from across a room without reading anything, and that is worth more here
+   * than in most apps: the person using Echo may be struggling with language,
+   * which is why they are using Echo.
+   */
+  const orbState: OrbState =
+    state.phase === 'processing' ? 'thinking'
+      : state.phase === 'speaking' ? 'speaking'
+        : speech.listening ? 'listening'
+          : 'idle';
+
+  const caption =
+    state.phase === 'processing' ? 'Thinking…'
+      : state.phase === 'speaking' ? 'Speaking'
+        : speech.listening ? 'Listening…'
+          : 'Tap to speak';
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.title}>Echo</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Echo</Text>
+      </View>
+
+      <View style={styles.stage}>
+        {/*
+          The orb IS the button, the way Siri is. The handler underneath is
+          untouched — this only changes what the tap target looks like.
+        */}
+        <Pressable
+          style={styles.orbTap}
+          onPress={() => void (speech.listening ? speech.stop() : speech.start()).catch((error) => dispatch({ type: 'ERROR', message: error instanceof Error ? error.message : 'Speech recognition failed.' }))}
+          disabled={state.phase !== 'listening'}
+          accessibilityRole="button"
+          accessibilityLabel={speech.listening ? 'Stop listening' : 'Start listening'}
+        >
+          <SiriOrb state={orbState} size={128} />
+        </Pressable>
+
+        <Text style={styles.caption}>{caption}</Text>
+
+        {/*
+          The live transcript, set large and centred. This is the thing the
+          user is actually watching — whether the machine heard them right —
+          so it gets the size that importance deserves rather than a footnote.
+        */}
+        {state.phase === 'listening' && speech.partial ? (
+          <Text style={styles.partial}>{speech.partial}</Text>
+        ) : null}
+        {state.phase === 'speaking' && <Text style={styles.spoken}>{state.text}</Text>}
+        {state.phase === 'processing' && <Text style={styles.help}>Putting your words together.</Text>}
+      </View>
+
       {state.phase === 'listening' && <>
-        <Text style={styles.help}>Speak naturally; Android will transcribe your words on-device or via its configured speech service.</Text>
-        <Pressable style={styles.primary} onPress={() => void (speech.listening ? speech.stop() : speech.start()).catch((error) => dispatch({ type: 'ERROR', message: error instanceof Error ? error.message : 'Speech recognition failed.' }))}><Text style={styles.primaryText}>{speech.listening ? 'Stop listening' : 'Start listening'}</Text></Pressable>
-        {speech.partial && <Text style={styles.partial}>Heard: {speech.partial}</Text>}
+        {!speech.partial && !speech.listening && (
+          <Text style={styles.help}>Speak naturally; Android will transcribe your words on-device or via its configured speech service.</Text>
+        )}
         {speech.error && <Text style={styles.error}>{speech.error}</Text>}
         <Pressable
           style={styles.modelButton}
@@ -178,30 +238,130 @@ export function SecondVoicePanel({ enabled, phraseHints = [], onOpenChange, spok
           <Text style={styles.cloudNotice}>Using Claude fallback — demo build key is bundled in this app.</Text>
         )}
       </>}
-      {state.phase === 'processing' && <Text style={styles.help}>Preparing your response…</Text>}
-      {state.phase === 'speaking' && <><Text style={styles.spoken}>{state.text}</Text><Text style={styles.help}>Spoken automatically.</Text></>}
       {state.phase === 'error' && <Text style={styles.error}>{state.message}</Text>}
-      <Pressable style={styles.cancel} onPress={close}><Text style={styles.secondaryText}>Cancel</Text></Pressable>
+      <Pressable style={styles.cancel} onPress={close}>
+        <Text style={styles.cancelText}>Cancel</Text>
+      </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  launch: { position: 'absolute', bottom: 20, left: 20, backgroundColor: '#263c59', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18 },
-  launchText: { color: '#fff', fontWeight: '700' },
-  panel: { position: 'absolute', zIndex: 10, left: 20, right: 20, top: 20, bottom: 20, backgroundColor: '#111a25', borderRadius: 18, padding: 22, justifyContent: 'center', gap: 12 },
-  title: { color: '#fff', fontSize: 24, fontWeight: '700' },
-  help: { color: '#b8c2ce', fontSize: 15 },
-  primary: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#3378c5', borderRadius: 10, padding: 14 },
-  primaryText: { color: '#fff', fontWeight: '700' },
-  secondary: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#2b3745', borderRadius: 10, padding: 14 },
-  secondaryText: { color: '#d7e2ee', fontWeight: '600' },
-  spoken: { color: '#7fe0a0', fontSize: 20, textAlign: 'center' },
-  error: { color: '#ff9b8f' },
-  cancel: { alignSelf: 'center', padding: 10 },
-  modelButton: { alignItems: 'center', backgroundColor: '#2b3745', borderRadius: 10, padding: 12 },
-  localReady: { color: '#7fe0a0', fontSize: 13 },
-  cloudNotice: { color: '#f0c979', fontSize: 13, textAlign: 'center' },
-  partial: { color: '#c8d9ed', fontStyle: 'italic' },
-  modelError: { gap: 8, padding: 12, borderRadius: 10, backgroundColor: '#321f2b' },
+  /*
+   * Near-black rather than the old slate blue, and a much larger radius.
+   * Everything that is not the orb is deliberately quiet: the panel is a dark
+   * room with one light in it, which is the entire visual idea being borrowed.
+   *
+   * No blur. expo-blur is a native dependency and this is decoration; layered
+   * translucency reads close enough on a black background.
+   */
+  panel: {
+    position: 'absolute',
+    zIndex: 10,
+    left: 14,
+    right: 14,
+    top: 14,
+    bottom: 14,
+    // Fully opaque. At 97% the idle screen behind it showed through — the
+    // face's two eyes read as a pair of grey circles floating beside the orb,
+    // and "Tap anywhere to start" ghosted under the paragraph. Translucency is
+    // only free when there is nothing behind you.
+    backgroundColor: '#0a0a0e',
+    borderRadius: 34,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    // Centred with real gaps rather than space-between. space-between plus a
+    // flex:1 stage let the stage's centred caption overlap the paragraph
+    // underneath it, because an overflowing flex child is not clipped in React
+    // Native — it just draws on top of its neighbour.
+    justifyContent: 'center',
+    gap: 10,
+  },
+
+  header: { alignItems: 'center' },
+  title: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 3,
+    textTransform: 'uppercase',
+  },
+
+  stage: { alignItems: 'center', justifyContent: 'center', gap: 10 },
+  orbTap: { alignItems: 'center', justifyContent: 'center' },
+
+  caption: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 14,
+    letterSpacing: 0.3,
+  },
+
+  /** The live transcript. Large, light, centred — the Siri treatment. */
+  partial: {
+    color: '#ffffff',
+    fontSize: 26,
+    fontWeight: '300',
+    lineHeight: 34,
+    textAlign: 'center',
+    paddingHorizontal: 8,
+  },
+  spoken: {
+    color: '#ffffff',
+    fontSize: 26,
+    fontWeight: '300',
+    lineHeight: 34,
+    textAlign: 'center',
+    paddingHorizontal: 8,
+  },
+
+  help: {
+    color: 'rgba(255,255,255,0.38)',
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+
+  /* Controls: translucent pills, no solid blue slab. */
+  secondary: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 999,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  secondaryText: { color: 'rgba(255,255,255,0.8)', fontWeight: '600', fontSize: 13 },
+  modelButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 999,
+    paddingVertical: 10,
+  },
+
+  cancel: { alignSelf: 'center', paddingVertical: 8, paddingHorizontal: 28 },
+  cancelText: { color: 'rgba(255,255,255,0.5)', fontWeight: '500', fontSize: 15 },
+
+  error: { color: '#ff9b8f', fontSize: 13, textAlign: 'center' },
+  localReady: { color: 'rgba(126,224,160,0.75)', fontSize: 11.5, textAlign: 'center' },
+  cloudNotice: { color: 'rgba(240,201,121,0.75)', fontSize: 11.5, textAlign: 'center' },
+  modelError: { gap: 8, padding: 12, borderRadius: 14, backgroundColor: 'rgba(255,90,80,0.10)' },
+
+  /** The launcher, now carrying a small orb so it looks like what it opens. */
+  launch: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.09)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 999,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+  },
+  launchText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 });
