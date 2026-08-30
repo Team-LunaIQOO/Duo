@@ -47,10 +47,9 @@ export function AppShell() {
     poseHandlers.current.fall(frame);
   }, []);
 
-  // Main TTS is interruptible by the wake phrase. useSpeechCommands ignores
-  // every other recognition result while Duo talks, so its own feedback cannot
-  // execute a command. Fall and Echo speech remain fully muted because they
-  // have separate safety/recognition flows.
+  // Recognition closes while Duo talks. This phone's recognizer captures its
+  // own loudspeaker and can deliver that audio as a delayed final transcript,
+  // so full-duplex TTS would make Duo act on words it said itself.
   const speaking = useSpeakOnChange(session.lastSpoken);
 
   // Speech recognition lives here rather than inside useSessionController, so
@@ -107,8 +106,7 @@ export function AppShell() {
     fallAlertActive: fallAlert.state.status === 'countdown',
     onFallAlertCancel: fallAlert.cancel,
     followUpToken: controller.conversationTurn,
-    interruptibleSpeaking: speaking,
-    muted: secondVoiceOpen || fallAlertSpeaking,
+    muted: speaking || secondVoiceOpen || fallAlertSpeaking,
   });
 
   return (

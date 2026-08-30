@@ -29,14 +29,13 @@
  * never leaves the phone, so "the exercise session works in airplane mode"
  * survives having a wake phrase.
  *
- * ## Duo must not obey itself
+ * ## Duo must not hear itself
  *
- * While main TTS is speaking, recognition accepts only the wake phrase. That
- * allows a user to say "hey duo" to interrupt a long answer, but prevents a
- * spoken line such as "Tap or say start when ready" from executing its own
- * command. Fall-alert and Echo speech still mute recognition completely.
- * The voice self-test also checks that no fixed spoken line contains the wake
- * phrase, as a standing guard on future feedback lines.
+ * Recognition is suspended while the app is speaking. This device feeds its
+ * loudspeaker back into Android speech recognition and can emit the buffered
+ * audio only after TTS ends; keeping both open caused Duo's own reply to be
+ * processed as a new user command. The voice self-test also checks that no
+ * fixed spoken line contains the wake phrase.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -47,6 +46,7 @@ import {
 } from 'expo-speech-recognition';
 import { parseVoiceCommand } from './commandParser';
 import { isFallAlertCancelRequest, isOpenEchoRequest } from './navigation';
+import { resolveSpeechTranscripts } from './speechResult';
 import { matchWakePhrase, routeWakeMatch } from './wakePhrase';
 
 /**
@@ -74,6 +74,19 @@ const COMMAND_HINTS = [
   'say again',
   'how many',
 ];
+
+/** Match the connected device/user locale instead of forcing US English. */
+const RECOGNITION_LOCALE = 'en-IN';
+const ON_DEVICE_RECOGNITION_SERVICE = 'com.google.android.as';
+
+function pickInstalledEnglishLocale(locales: string[]): string | null {
+  return (
+    locales.find((locale) => locale.toLowerCase() === RECOGNITION_LOCALE.toLowerCase()) ??
+    locales.find((locale) => locale.toLowerCase().startsWith('en-')) ??
+    locales.find((locale) => locale.toLowerCase() === 'en') ??
+    null
+  );
+}
 
 /**
  * How long a bare "hey duo" keeps listening for the command that follows it.
@@ -172,11 +185,9 @@ type Options = {
   onFallAlertCancel: () => void;
   /** Increments when Claude has spoken a conversational reply. */
   followUpToken: number;
-  /** True while Duo's main TTS can be interrupted by saying the wake phrase. */
-  interruptibleSpeaking: boolean;
   /**
-   * True when another audio/recognition flow owns the microphone. Unlike main
-   * TTS, this suspends recognition completely.
+   * True while the app is speaking or another recognition flow owns the mic.
+   * Recognition is suspended for the duration so Duo cannot hear itself.
    */
   muted: boolean;
 };
@@ -188,7 +199,6 @@ export function useSpeechCommands({
   fallAlertActive,
   onFallAlertCancel,
   followUpToken,
-  interruptibleSpeaking,
   muted,
 }: Options): SpeechCommandsStatus {
   // Both callbacks close over session state and change identity on most
@@ -204,12 +214,11 @@ export function useSpeechCommands({
   fallAlertActiveRef.current = fallAlertActive;
   const onFallAlertCancelRef = useRef(onFallAlertCancel);
   onFallAlertCancelRef.current = onFallAlertCancel;
-  const interruptibleSpeakingRef = useRef(interruptibleSpeaking);
-  interruptibleSpeakingRef.current = interruptibleSpeaking;
 
   const [listening, setListening] = useState(false);
   const [available, setAvailable] = useState(false);
   const [usingOnDevice, setUsingOnDevice] = useState(false);
+  const [recognitionLocale, setRecognitionLocale] = useState(RECOGNITION_LOCALE);
   const [onDeviceNote, setOnDeviceNote] = useState('');
   const [wakeEnabled, setWakeEnabled] = useState(true);
   const [armed, setArmed] = useState(false);
@@ -226,13 +235,6 @@ export function useSpeechCommands({
    * that genuinely saying the name twice still works.
    */
   const lastWakeAt = useRef(0);
-  /**
-   * The most recent non-empty partial, held until a final arrives.
-   *
-   * This recogniser's finals are empty; the words live in the partials. See
-   * the note in the result handler.
-   */
-  const lastPartialRef = useRef<string[]>([]);
   const errorCountRef = useRef(0);
   /**
    * Which kind of session is open, so the keep-alive effect below can tell its
@@ -246,8 +248,9 @@ export function useSpeechCommands({
   const sessionKindRef = useRef<'wake' | 'oneshot' | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const permissionRef = useRef<boolean | null>(null);
+  const pendingTranscriptsRef = useRef<string[]>([]);
   const lastFollowUpTokenRef = useRef(followUpToken);
-  const pendingFollowUpRef = useRef<{ token: number; sawSpeaking: boolean } | null>(null);
+  const pendingFollowUpRef = useRef<{ token: number; sawMuted: boolean } | null>(null);
 
   /*
    * The wake phrase used to require on-device recognition, as a privacy rule I
@@ -284,10 +287,21 @@ export function useSpeechCommands({
           return;
         }
 
+        // The installed offline language list belongs to Android System
+        // Intelligence, not necessarily the device's default online service.
+        // Only probe that package when it is actually present; otherwise the
+        // package-specific query rejects and used to hide the useful reason
+        // the app had fallen back to online recognition.
+        const services = ExpoSpeechRecognitionModule.getSpeechRecognitionServices();
+        if (!services.includes(ON_DEVICE_RECOGNITION_SERVICE)) {
+          if (!cancelled) setOnDeviceNote('offline speech service unavailable; using network recogniser');
+          return;
+        }
+
         /*
          * supportsOnDeviceRecognition() answers "is the feature present", not
          * "is a language actually installed", and those are very different
-         * things. With the feature present but the en-US pack missing, the
+         * things. With the feature present but the requested pack missing, the
          * recogniser runs, reports withSpeech: true, and returns
          * "empty final recognition results" forever — which is exactly what
          * this device was doing. It looks like a broken microphone and is not
@@ -299,11 +313,12 @@ export function useSpeechCommands({
         }).catch(() => null);
 
         const installed = locales?.installedLocales ?? [];
-        const hasEnglish = installed.some((locale) => locale.toLowerCase().startsWith('en'));
+        const installedEnglishLocale = pickInstalledEnglishLocale(installed);
 
         if (cancelled) return;
 
-        if (hasEnglish) {
+        if (installedEnglishLocale) {
+          setRecognitionLocale(installedEnglishLocale);
           setUsingOnDevice(true);
           setOnDeviceNote('');
           return;
@@ -315,7 +330,7 @@ export function useSpeechCommands({
         // platform recogniser remains functional over the network, and a pack
         // installed separately will be picked up on the next launch.
         setUsingOnDevice(false);
-        setOnDeviceNote('');
+        setOnDeviceNote('no installed English offline model; using network recogniser');
       } catch {
         if (cancelled) return;
         setAvailable(false);
@@ -345,21 +360,21 @@ export function useSpeechCommands({
   useEffect(() => {
     if (followUpToken === lastFollowUpTokenRef.current) return;
     lastFollowUpTokenRef.current = followUpToken;
-    pendingFollowUpRef.current = { token: followUpToken, sawSpeaking: interruptibleSpeaking };
-  }, [followUpToken, interruptibleSpeaking]);
+    pendingFollowUpRef.current = { token: followUpToken, sawMuted: muted };
+  }, [followUpToken, muted]);
 
   useEffect(() => {
     const pending = pendingFollowUpRef.current;
     if (!pending) return;
-    if (interruptibleSpeaking) {
-      pending.sawSpeaking = true;
+    if (muted) {
+      pending.sawMuted = true;
       return;
     }
-    if (pending.sawSpeaking) {
+    if (pending.sawMuted) {
       pendingFollowUpRef.current = null;
       arm(CONVERSATION_WINDOW_MS);
     }
-  }, [interruptibleSpeaking, arm]);
+  }, [muted, arm]);
 
   /** Opens a recognition session. Continuous when listening for the wake phrase. */
   const startSession = useCallback(
@@ -377,7 +392,7 @@ export function useSpeechCommands({
 
           sessionKindRef.current = continuous ? 'wake' : 'oneshot';
           ExpoSpeechRecognitionModule.start({
-            lang: 'en-US',
+            lang: recognitionLocale,
             // Interim results matter for a wake phrase. A final result only
             // arrives once the recogniser decides the utterance is over, which
             // is a second or more after the words were actually said; matching
@@ -398,22 +413,24 @@ export function useSpeechCommands({
         }
       })();
     },
-    [usingOnDevice]
+    [recognitionLocale, usingOnDevice]
   );
 
   useSpeechRecognitionEvent('start', () => {
+    pendingTranscriptsRef.current = [];
     setListening(true);
     errorCountRef.current = 0;
   });
 
   useSpeechRecognitionEvent('end', () => {
+    pendingTranscriptsRef.current = [];
     sessionKindRef.current = null;
     // Whatever was half-heard when the session ended is not an instruction.
-    lastPartialRef.current = [];
     setListening(false);
   });
 
   useSpeechRecognitionEvent('error', (event) => {
+    pendingTranscriptsRef.current = [];
     sessionKindRef.current = null;
     setListening(false);
 
@@ -439,64 +456,14 @@ export function useSpeechCommands({
   });
 
   useSpeechRecognitionEvent('result', (event) => {
-    let transcripts = event.results.map((r) => r.transcript).filter(Boolean);
-
-    /*
-     * Carry the last partial forward into an empty final.
-     *
-     * On this device the on-device recogniser puts its words in PARTIAL
-     * results and then delivers a final with nothing in it — Android's own log
-     * says "onResults empty final recognition results" after every utterance.
-     *
-     * Two correct-looking rules collided here. Acting only on finals is right:
-     * a half-heard sentence is easily a different sentence, and executing one
-     * mid-utterance could end a session the user was in the middle of. But
-     * with finals arriving empty, that rule discarded every word ever spoken
-     * to the app, and the symptom was simply that nothing happened.
-     *
-     * Buffering the last partial satisfies both. Actions still fire only when
-     * Android says the utterance is over, so nothing acts early — the final
-     * just no longer has to carry the text itself.
-     */
-    if (!event.isFinal && transcripts.length > 0) {
-      lastPartialRef.current = transcripts;
-    }
-
-    if (transcripts.length === 0) {
-      if (!event.isFinal || lastPartialRef.current.length === 0) return;
-      transcripts = lastPartialRef.current;
-    }
-
-    if (event.isFinal) lastPartialRef.current = [];
-
-    /*
-     * Barge-in is deliberately wake-gated. Android may transcribe audio coming
-     * from the phone's own speaker, so accepting arbitrary speech here would
-     * let Duo execute words from its own reply. A user saying "hey duo" is the
-     * one unambiguous interruption signal: stop TTS immediately, then either
-     * handle the remainder of the final transcript or keep listening for it.
-     */
-    if (interruptibleSpeakingRef.current) {
-      for (const transcript of transcripts) {
-        const wake = matchWakePhrase(transcript);
-        if (!wake.matched || wake.target !== 'duo') continue;
-
-        setLastHeard(transcript);
-        void Speech.stop();
-        const route = routeWakeMatch(wake, event.isFinal);
-        if (route.kind === 'instruction') {
-          disarm();
-          onHeardRef.current(route.sentence);
-        } else {
-          arm();
-        }
-        return;
-      }
-
-      // This is normally Duo's own voice. Never display or act on it.
-      return;
-    }
-
+    const resolved = resolveSpeechTranscripts(
+      event.results.map((r) => r.transcript),
+      event.isFinal,
+      pendingTranscriptsRef.current
+    );
+    pendingTranscriptsRef.current = resolved.pending;
+    const transcripts = resolved.transcripts;
+    if (transcripts.length === 0) return;
     setLastHeard(transcripts[0]);
 
     /*
@@ -615,8 +582,8 @@ export function useSpeechCommands({
       restartTimerRef.current = null;
     }
 
-    // Another audio flow owns recognition. Main Duo TTS is not represented by
-    // `muted`: its session stays open for wake-gated interruption above.
+    // Duo is speaking. Whatever is listening has to stop, wake session or not,
+    // or the app hears its own voice.
     if (muted) {
       if (sessionKindRef.current !== null) {
         try {

@@ -23,6 +23,7 @@
 
 import { matchWakePhrase, routeWakeMatch } from './wakePhrase';
 import { parseVoiceCommand } from './commandParser';
+import { resolveSpeechTranscripts } from './speechResult';
 import {
   isOtherArmRequest,
   isSwitchExerciseRequest,
@@ -140,6 +141,16 @@ check(
   'a bare wake carries no command',
   bare.matched && parseVoiceCommand(bare.remainder) === null,
   `remainder "${bare.remainder}"`
+);
+
+// Android's on-device recogniser can report speech in an interim hypothesis
+// and then send an empty final result. The final event must not erase the
+// only transcript the app received.
+const interim = resolveSpeechTranscripts(['hey duo start'], false, []);
+const recovered = resolveSpeechTranscripts([], true, interim.pending);
+check(
+  'an empty final result recovers the latest interim transcript',
+  recovered.transcripts[0] === 'hey duo start' && recovered.pending.length === 0
 );
 
 // ---------------------------------------------------------------------------

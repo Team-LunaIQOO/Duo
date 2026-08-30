@@ -26,7 +26,6 @@ import {
   otherExercise,
   parseExerciseRequest,
 } from './voice/navigation';
-import { requestReply } from './voice/replyClient';
 import { requestIntent, type VoiceIntent } from './voice/intentClient';
 import { FatigueDetector } from '../fatigue';
 import { GesturePauseDetector, type GestureDebug } from '../gesture';
@@ -363,6 +362,9 @@ export function useSessionController() {
         }
       },
 
+      // Rep and fatigue feedback is deterministic and single-shot. Do not
+      // dispatch a second asynchronous Claude reply here: useSpeakOnChange
+      // owns one TTS channel and a late reply would interrupt this line.
       onRep: (rep: RepEvent) => {
         const signal = fatigueRef.current?.onRepEvent(rep) ?? null;
 
@@ -377,15 +379,7 @@ export function useSessionController() {
 
           const feedbackLine = pickRepFeedback(rep, previousQualityRef.current);
           if (feedbackLine) {
-            // say() is the only speaker. Writing the line here as well made
-            // Duo say it twice whenever Claude answered: once from the table
-            // immediately, then again in different words a second later. It
-            // never showed up in testing because the model was never actually
-            // being reached — the bug only existed when things WORKED.
-            say(
-              `The user just completed a good rep after a compensated one. Rep ${rep.repNumber}.`,
-              feedbackLine
-            );
+            next = machine.speak(next, feedbackLine);
           }
           previousQualityRef.current = rep.quality;
 
@@ -396,13 +390,7 @@ export function useSessionController() {
             next = machine.applyFatigue(next, signal);
             if (signal.level !== 'none') {
               const line = FATIGUE_LINES[signal.level];
-              // Single speaker, same reason as the rep feedback above.
-              say(
-                signal.level === 'fatigued'
-                  ? `The user is fatigued after ${s.reps.length + 1} reps. Offer to stop for today, warmly, crediting what they did.`
-                  : `The user is slowing down after ${s.reps.length + 1} reps. Offer a rest without insisting.`,
-                line
-              );
+              next = machine.speak(next, line);
             }
           }
 
@@ -518,29 +506,6 @@ export function useSessionController() {
   }, [isActive]);
 
 
-  /**
-   * Say something, in Duo's own words where possible.
-   *
-   * `fallback` is the hand-written line from feedbackTable.ts and is what gets
-   * spoken if the proxy is slow, closed, or the phone is offline — so every
-   * call site still has a guaranteed line and the session never waits on a
-   * network. The generated line replaces it when it arrives in time.
-   *
-   * Fire-and-forget on purpose: nothing in the session loop awaits this, so a
-   * slow reply delays a sentence and never a rep.
-   */
-  const say = useCallback(
-    (situation: string, fallback: string, urgency: 'urgent' | 'relaxed' = 'relaxed') => {
-      void requestReply({ situation, fallback, urgency, context: contextRef.current }).then(
-        (outcome) => {
-          setSession((s) => machine.speak(s, outcome.text));
-          setReplySource(outcome.generated ? 'claude' : 'local');
-        }
-      );
-    },
-    []
-  );
-
   const startSetup = useCallback(() => {
     // Duo asks the question out loud as well as on screen. 02-product-spec.md
     // step 2: "Duo asks what they are working on today, out loud and in
@@ -585,10 +550,9 @@ export function useSessionController() {
     setSession((s) => {
       const next = otherExercise(s.exercise);
       const line = `Switching to ${exerciseName(next)}. Sit still for a moment.`;
-      say(`The user asked to switch to a different exercise: ${exerciseName(next)}. Confirm briefly and ask them to hold still while you recalibrate.`, line);
       return machine.acknowledge(machine.speak({ ...s, exercise: next }, line));
     });
-  }, [say]);
+  }, []);
 
   const switchArm = useCallback(() => {
     setCurrentArm((arm) => (arm === 'affected' ? 'unaffected' : 'affected'));

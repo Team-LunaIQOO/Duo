@@ -44,7 +44,9 @@
           "microphonePermission": "Duo listens for short commands like start, pause and stop.",
           "speechRecognitionPermission": "Duo turns your spoken commands into actions on the screen.",
           "androidSpeechServicePackages": [
-            "com.google.android.googlequicksearchbox"
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.as",
+            "com.google.android.tts"
           ]
         }
       ]
